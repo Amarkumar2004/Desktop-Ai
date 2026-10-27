@@ -1,0 +1,6 @@
+[build]
+jobs = 2
+target-dir = "C:/Users/ag639/AppData/Local/Temp/susi_tauri_target"
+
+[target.x86_64-pc-windows-msvc]
+linker = "link.exe"

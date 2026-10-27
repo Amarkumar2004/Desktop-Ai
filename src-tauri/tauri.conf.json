@@ -1,0 +1,42 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devPath": "http://localhost:3000",
+    "beforeBuildCommand": "npm run build",
+    "distDir": "http://localhost:3000",
+    "withGlobalTauri": true
+  },
+  "package": {
+    "productName": "SUSI AI Assistant",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false
+    },
+    "bundle": {
+      "active": true,
+      "category": "DeveloperTool",
+      "identifier": "com.susi.ai",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ]
+    },
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' blob: data: https://*.supabase.co https://images.unsplash.com https://api.dicebear.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co ws://localhost:* http://localhost:* tauri://localhost;"
+    },
+    "windows": [
+      {
+        "title": "SUSI AI Assistant",
+        "width": 1280,
+        "height": 840,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  }
+}
