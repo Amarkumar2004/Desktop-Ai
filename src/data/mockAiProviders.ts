@@ -105,24 +105,4 @@ export const AI_PROVIDERS_CATALOG: ExtendedAiProviderConfig[] = [
   },
 ];
 
-export const INITIAL_MOCK_CONNECTIONS: ProviderConnectionMetadata[] = [
-  {
-    id: 'conn_gemini_demo',
-    workspaceId: 'ws_default_01',
-    provider: 'google_gemini',
-    providerLabel: 'Google Gemini',
-    displayName: 'Google Gemini',
-    maskedKeySuffix: '••••8921',
-    selectedModel: 'gemini-2.0-flash',
-    availableModels: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
-    status: 'connected',
-    capabilities: {
-      voice: true,
-      chat: true,
-      code: true,
-    },
-    createdAt: '2026-09-15T10:30:00Z',
-    lastValidatedAt: '2026-09-28T21:45:00Z',
-    lastUsedAt: '2026-09-28T22:15:00Z',
-  },
-];
+export const INITIAL_MOCK_CONNECTIONS: ProviderConnectionMetadata[] = [];

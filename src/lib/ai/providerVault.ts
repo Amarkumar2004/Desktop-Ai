@@ -21,59 +21,27 @@ export interface UnifiedModelOption {
 
 /**
  * Returns default initial connections.
+ * By default empty: user must explicitly add their key in Settings to show connected.
  */
 export function getDefaultProviderConnections(): ProviderConnectionMetadata[] {
-  const geminiConfig = AI_PROVIDERS_CATALOG.find((c) => c.id === 'google_gemini')!;
-  const freellmConfig = AI_PROVIDERS_CATALOG.find((c) => c.id === 'freellm')!;
-
-  return [
-    {
-      id: 'conn_freellm_default',
-      workspaceId: 'ws_default_01',
-      provider: 'freellm',
-      providerLabel: freellmConfig.name,
-      displayName: 'FreeLLMMap Multi-Agent Gateway',
-      maskedKeySuffix: '••••free',
-      baseUrl: freellmConfig.defaultBaseUrl,
-      selectedModel: 'deepseek/deepseek-chat',
-      availableModels: [...freellmConfig.defaultModels],
-      status: 'connected',
-      capabilities: { voice: true, chat: true, code: true },
-      createdAt: '2026-10-27T00:00:00Z',
-    },
-    {
-      id: 'conn_gemini_default',
-      workspaceId: 'ws_default_01',
-      provider: 'google_gemini',
-      providerLabel: geminiConfig.name,
-      displayName: 'Google Gemini Workspace',
-      maskedKeySuffix: '••••live',
-      selectedModel: 'gemini-2.0-flash',
-      availableModels: [...geminiConfig.defaultModels],
-      status: 'connected',
-      capabilities: { voice: true, chat: true, code: true },
-      createdAt: '2026-10-27T00:00:00Z',
-    },
-  ];
+  return [];
 }
 
 /**
  * Loads stored connections from client localStorage.
  */
 export function getStoredProviderConnections(): ProviderConnectionMetadata[] {
-  if (typeof window === 'undefined') return getDefaultProviderConnections();
+  if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY_PROVIDERS);
     if (!raw) {
-      const defaults = getDefaultProviderConnections();
-      localStorage.setItem(STORAGE_KEY_PROVIDERS, JSON.stringify(defaults));
-      return defaults;
+      return [];
     }
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    return getDefaultProviderConnections();
+    if (Array.isArray(parsed)) return parsed;
+    return [];
   } catch {
-    return getDefaultProviderConnections();
+    return [];
   }
 }
 

@@ -135,7 +135,9 @@ export default function CodeAssistantView({
     );
   };
 
-  const activeConnection = connections.find((c) => c.status === 'connected');
+  const activeConnection = connections.find(
+    (c) => c.status === 'connected' && Boolean(c.rawKey && c.rawKey.trim())
+  );
 
   const addActivity = (
     type: CodeAssistantActivity['type'],
@@ -371,15 +373,11 @@ Requirements:
       setPreviewRenderKey((k) => k + 1);
       addActivity('preview_generated', `Completed streaming for ${currentFile.name}.`);
     } catch (err: any) {
-      console.warn('Live code streaming fallback:', err);
-      const tmpl = MOCK_CODE_TEMPLATES[selectedCategory];
-      if (tmpl && (!accumulatedCode || accumulatedCode.length < 30)) {
-        setActivePlan(tmpl.plan);
-      }
-      setWorkflowState('preview_ready');
-      setStatusNotice('Preview ready (offline/fallback mode).');
-      setPreviewRenderKey((k) => k + 1);
-      addActivity('preview_generated', 'Completed code generation via local fallback.');
+      console.warn('Live code streaming error:', err);
+      setWorkflowState('error');
+      setStatusNotice('No active AI key found or endpoint error. Go to Settings → AI Providers to connect your key.');
+      warning('Live Stream Failed', 'Please connect a valid API key (FreeLLMMap, Gemini, etc.) in Settings.');
+      addActivity('preview_generated', `Error: ${err?.message || 'Failed to stream real-time code'}`);
     }
   };
 
