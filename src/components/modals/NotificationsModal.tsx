@@ -563,7 +563,7 @@ export default function NotificationsModal({
                         )}
 
                         <div className="flex items-center gap-2 text-[10px] text-stone-400 flex-wrap">
-                          <span className="font-mono text-stone-500">{article.timeAgo}</span>
+                          <span className="font-mono text-stone-500">{formatTimeAgo(article.seendate) || article.timeAgo}</span>
                           <span>•</span>
                           <span className="text-stone-600 font-medium">{article.domain}</span>
 
