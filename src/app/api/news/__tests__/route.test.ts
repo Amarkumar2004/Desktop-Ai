@@ -638,6 +638,32 @@ describe('GET /api/news route handler', () => {
     const cbStatus = getCircuitBreakerStatus();
     expect(cbStatus.consecutiveFailures).toBe(1);
   });
+
+  it('orders articles strictly newest-first in processRawArticles and processRawRssArticles', () => {
+    const rawArticles = [
+      {
+        url: 'https://example.com/older',
+        title: 'Older Story',
+        seendate: '20261015T040000Z',
+      },
+      {
+        url: 'https://example.com/newer',
+        title: 'Newer Story',
+        seendate: '20261015T080000Z',
+      },
+      {
+        url: 'https://example.com/middle',
+        title: 'Middle Story',
+        seendate: '20261015T060000Z',
+      },
+    ];
+
+    const processed = processRawArticles(rawArticles);
+    expect(processed).toHaveLength(3);
+    expect(processed[0].id).toBe('https://example.com/newer');
+    expect(processed[1].id).toBe('https://example.com/middle');
+    expect(processed[2].id).toBe('https://example.com/older');
+  });
 });
 
 

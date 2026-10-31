@@ -174,6 +174,15 @@ export default function NotificationsModal({
       );
     }
 
+    // Strictly sort so newly arrived articles float to the top, followed by newest publication date
+    baseList.sort((a, b) => {
+      if (a.isNew && !b.isNew) return -1;
+      if (!a.isNew && b.isNew) return 1;
+      const timeA = new Date(a.seendate).getTime() || 0;
+      const timeB = new Date(b.seendate).getTime() || 0;
+      return timeB - timeA;
+    });
+
     return baseList;
   }, [
     newsArticles,

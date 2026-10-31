@@ -1054,7 +1054,11 @@ function DashboardContent() {
                         return (
                           <div
                             key={article.id}
-                            className="flex items-start gap-2 text-xs p-1 rounded-lg hover:bg-stone-50 transition-colors group"
+                            className={`flex items-start gap-2 text-xs p-1 rounded-lg transition-colors group ${
+                              article.isNew
+                                ? 'bg-amber-50/50 border border-amber-200/60'
+                                : 'hover:bg-stone-50'
+                            }`}
                           >
                             <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${dotColor} ${article.isNew ? 'animate-ping' : ''}`} />
                             <div className="flex-1 min-w-0">

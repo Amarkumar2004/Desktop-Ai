@@ -31,6 +31,23 @@ const DEFAULT_POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes sensible default
 const LS_NEWS_ARTICLES   = 'susi_news_cached_articles';
 const LS_NEWS_HIGHLIGHTS = 'susi_news_cached_highlights';
 
+/**
+ * Sorting comparator for real-time news display:
+ * 1. Freshly discovered articles (`isNew === true`) float to the very top.
+ * 2. All articles are strictly sorted descending by publication timestamp (newest first).
+ * 3. Ties broken by server ingestion timestamp.
+ */
+export function sortArticlesNewestFirst(a: GlobalNewsArticle, b: GlobalNewsArticle): number {
+  if (a.isNew && !b.isNew) return -1;
+  if (!a.isNew && b.isNew) return 1;
+
+  const timeA = new Date(a.seendate).getTime() || a.ingestedAtMs || 0;
+  const timeB = new Date(b.seendate).getTime() || b.ingestedAtMs || 0;
+  if (timeB !== timeA) return timeB - timeA;
+
+  return (b.ingestedAtMs || 0) - (a.ingestedAtMs || 0);
+}
+
 export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNewsMonitoringReturn {
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   // Hydrate from localStorage for instant, zero-flicker render if previous articles exist
@@ -40,7 +57,9 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
         const raw = localStorage.getItem(LS_NEWS_ARTICLES);
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.sort(sortArticlesNewestFirst);
+          }
         }
       } catch {}
     }
@@ -137,19 +156,39 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
           incoming.forEach((a) => seenArticleIdsRef.current.add(a.id || a.url));
         }
 
-        setArticles(processed);
+        // Merge incoming articles with existing state so previous unexpired articles aren't lost,
+        // and strictly sort so newly arrived articles and latest news are placed at the top.
+        setArticles((prev) => {
+          const map = new Map<string, GlobalNewsArticle>();
+          for (const item of processed) {
+            map.set(item.id, item);
+          }
+          const now = Date.now();
+          const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+          for (const prevArt of prev) {
+            if (!map.has(prevArt.id)) {
+              const artTime = new Date(prevArt.seendate).getTime() || prevArt.ingestedAtMs || now;
+              if (now - artTime < TWELVE_HOURS_MS) {
+                map.set(prevArt.id, { ...prevArt, isNew: false });
+              }
+            }
+          }
+          const sorted = Array.from(map.values()).sort(sortArticlesNewestFirst);
 
-        // Derive country highlights strictly from the current active news dataset.
-        const activeHighlights = computeCountryHighlights(processed);
-        setCountryHighlights(activeHighlights);
+          // Derive country highlights strictly from the current active news dataset.
+          const activeHighlights = computeCountryHighlights(sorted);
+          setCountryHighlights(activeHighlights);
 
-        // Persist to client cache.
-        if (typeof window !== 'undefined') {
-          try {
-            localStorage.setItem(LS_NEWS_ARTICLES, JSON.stringify(processed));
-            localStorage.setItem(LS_NEWS_HIGHLIGHTS, JSON.stringify(activeHighlights));
-          } catch {}
-        }
+          // Persist to client cache.
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem(LS_NEWS_ARTICLES, JSON.stringify(sorted));
+              localStorage.setItem(LS_NEWS_HIGHLIGHTS, JSON.stringify(activeHighlights));
+            } catch {}
+          }
+
+          return sorted;
+        });
 
         setLastUpdated(data.meta?.lastUpdated || (processed.length > 0 ? new Date().toISOString() : null));
         setIsRateLimited(Boolean(data.meta?.rateLimited));
@@ -220,11 +259,14 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
   }, [fetchNews]);
 
   const filteredArticles = useMemo(() => {
-    if (!selectedCountryCode) return articles;
-    const target = selectedCountryCode.toUpperCase();
-    return articles.filter((art) =>
-      art.countries.some((c) => c.code === target || c.code3 === target)
-    );
+    const list = selectedCountryCode
+      ? articles.filter((art) => {
+          const target = selectedCountryCode.toUpperCase();
+          return art.countries.some((c) => c.code === target || c.code3 === target);
+        })
+      : articles;
+
+    return [...list].sort(sortArticlesNewestFirst);
   }, [articles, selectedCountryCode]);
 
   return {

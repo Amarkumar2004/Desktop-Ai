@@ -42,6 +42,7 @@ import {
   extractSafePublisherDomain,
   parseRssXml,
 } from '@/app/api/news/route';
+import { sortArticlesNewestFirst } from '@/lib/hooks/useNewsMonitoring';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -716,6 +717,52 @@ describe('NewsUserPrefs Storage & Filters', () => {
     expect(isExpired).toBe(true);
     // Preserves original URL for reading
     expect(savedBookmark.url).toBe('https://example.com/expired-news');
+  });
+
+  it('22. sortArticlesNewestFirst floats freshly arrived articles (isNew=true) to the very top', () => {
+    const olderNewArticle = makeArticle({
+      id: 'article-new-1',
+      title: 'Newly Discovered Breaking Story',
+      seendate: '2026-10-31T10:00:00.000Z',
+      isNew: true,
+    });
+    const regularArticle = makeArticle({
+      id: 'article-regular-1',
+      title: 'Regular Existing Story',
+      seendate: '2026-10-31T11:00:00.000Z',
+      isNew: false,
+    });
+
+    const articles = [regularArticle, olderNewArticle];
+    const sorted = [...articles].sort(sortArticlesNewestFirst);
+
+    expect(sorted[0].id).toBe('article-new-1');
+    expect(sorted[1].id).toBe('article-regular-1');
+  });
+
+  it('23. sortArticlesNewestFirst orders articles descending by publication timestamp', () => {
+    const article10am = makeArticle({
+      id: 'art-10am',
+      seendate: '2026-10-31T10:00:00.000Z',
+      isNew: false,
+    });
+    const article12pm = makeArticle({
+      id: 'art-12pm',
+      seendate: '2026-10-31T12:00:00.000Z',
+      isNew: false,
+    });
+    const article08am = makeArticle({
+      id: 'art-08am',
+      seendate: '2026-10-31T08:00:00.000Z',
+      isNew: false,
+    });
+
+    const articles = [article08am, article10am, article12pm];
+    const sorted = [...articles].sort(sortArticlesNewestFirst);
+
+    expect(sorted[0].id).toBe('art-12pm');
+    expect(sorted[1].id).toBe('art-10am');
+    expect(sorted[2].id).toBe('art-08am');
   });
 });
 

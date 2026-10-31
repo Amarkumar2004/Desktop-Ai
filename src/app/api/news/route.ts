@@ -403,6 +403,11 @@ function loadCacheFromDisk(): {
         }
 
         if (validArticles.length > 0) {
+          validArticles.sort((a, b) => {
+            const timeA = new Date(a.seendate).getTime() || a.ingestedAtMs || 0;
+            const timeB = new Date(b.seendate).getTime() || b.ingestedAtMs || 0;
+            return timeB - timeA;
+          });
           return {
             articles: validArticles,
             highlights: computeCountryHighlights(validArticles),
@@ -644,6 +649,13 @@ export function processRawArticles(rawList: any[], now = Date.now()): GlobalNews
       isNew,
     });
   }
+
+  // Sort descending by publication timestamp so latest news is always on top
+  valid.sort((a, b) => {
+    const timeA = new Date(a.seendate).getTime() || a.ingestedAtMs || 0;
+    const timeB = new Date(b.seendate).getTime() || b.ingestedAtMs || 0;
+    return timeB - timeA;
+  });
 
   return valid;
 }
@@ -893,6 +905,13 @@ export function processRawRssArticles(items: RawRssItem[], now = Date.now()): Gl
       isNew,
     });
   }
+
+  // Sort descending by publication timestamp so latest news is always on top
+  valid.sort((a, b) => {
+    const timeA = new Date(a.seendate).getTime() || a.ingestedAtMs || 0;
+    const timeB = new Date(b.seendate).getTime() || b.ingestedAtMs || 0;
+    return timeB - timeA;
+  });
 
   return valid;
 }
@@ -1169,6 +1188,13 @@ export async function GET(req: NextRequest) {
       art.countries.some((c) => c.code === targetCode || c.code3 === targetCode)
     );
   }
+
+  // Strictly sort descending by publication/ingestion timestamp so newest articles are always at the top
+  responseArticles = [...responseArticles].sort((a, b) => {
+    const timeA = new Date(a.seendate).getTime() || a.ingestedAtMs || 0;
+    const timeB = new Date(b.seendate).getTime() || b.ingestedAtMs || 0;
+    return timeB - timeA;
+  });
 
   // Calculate publication timestamps for safe diagnostics
   let oldestPub: string | null = null;
