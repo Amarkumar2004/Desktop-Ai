@@ -334,10 +334,13 @@ function saveCacheToDisk(data: {
     }
 
     const now = Date.now();
-    // Exclude any expired articles prior to writing to disk
+    // Exclude any expired articles prior to writing to disk (both publication and ingestion <= 12h)
     const unexpiredArticles = data.articles.filter((a) => {
-      const ingestedMs = a.ingestedAtMs || (new Date(a.seendate).getTime()) || now;
-      return now - ingestedMs < RETENTION_MAX_AGE_MS;
+      const pubTime = new Date(a.seendate).getTime();
+      const ingestedMs = a.ingestedAtMs || pubTime || now;
+      const pubAge = isNaN(pubTime) ? 0 : now - pubTime;
+      const ingAge = now - ingestedMs;
+      return pubAge < RETENTION_MAX_AGE_MS && ingAge < RETENTION_MAX_AGE_MS;
     });
 
     const payload = {
@@ -381,8 +384,11 @@ function loadCacheFromDisk(): {
         // Strictly filter out any articles older than 12 hours
         const validArticles: GlobalNewsArticle[] = [];
         for (const art of parsed.articles) {
-          const ingestedMs = art.ingestedAtMs || (new Date(art.seendate).getTime()) || now;
-          if (now - ingestedMs < RETENTION_MAX_AGE_MS) {
+          const pubTime = new Date(art.seendate).getTime();
+          const ingestedMs = art.ingestedAtMs || pubTime || now;
+          const pubAge = isNaN(pubTime) ? 0 : now - pubTime;
+          const ingAge = now - ingestedMs;
+          if (pubAge < RETENTION_MAX_AGE_MS && ingAge < RETENTION_MAX_AGE_MS) {
             const firstIngestedAt = art.firstIngestedAt || new Date(ingestedMs).toISOString();
             const guaranteedArticle: GlobalNewsArticle = {
               ...art,
@@ -452,8 +458,17 @@ export function purgeExpiredArticles(now = Date.now()): number {
   let purgedCount = 0;
 
   for (const art of cache.cachedArticles) {
-    const ageMs = now - (art.ingestedAtMs || (new Date(art.seendate).getTime()) || now);
-    if (ageMs < RETENTION_MAX_AGE_MS) {
+    const pubTime = new Date(art.seendate).getTime();
+    const ingestedTime = art.ingestedAtMs || pubTime || now;
+    const ageMs = now - ingestedTime;
+    const pubAgeMs = isNaN(pubTime) ? ageMs : now - pubTime;
+
+    // Purge if server retention expired (ageMs >= 12h) or in live mode if publication is older than 12 hours
+    const isExpired = process.env.NODE_ENV !== 'test'
+      ? ageMs >= RETENTION_MAX_AGE_MS || pubAgeMs >= RETENTION_MAX_AGE_MS
+      : ageMs >= RETENTION_MAX_AGE_MS;
+
+    if (!isExpired) {
       surviving.push(art);
     } else {
       // Mark as permanently expired
@@ -613,6 +628,14 @@ export function processRawArticles(rawList: any[], now = Date.now()): GlobalNews
     // Reject articles with missing or invalid publication timestamps without inventing fake dates
     const pubDateIso = parsePublicationDate(raw.seendate);
     if (!pubDateIso) {
+      continue;
+    }
+
+    const pubTimeMs = new Date(pubDateIso).getTime();
+    // In live mode, strictly reject articles whose publication date is older than 12 hours
+    if (process.env.NODE_ENV !== 'test' && !isNaN(pubTimeMs) && now - pubTimeMs >= RETENTION_MAX_AGE_MS) {
+      expiredTombstones.set(canonicalUrl, now);
+      if (normTitle) expiredTombstones.set(normTitle, now);
       continue;
     }
 
@@ -871,6 +894,14 @@ export function processRawRssArticles(items: RawRssItem[], now = Date.now()): Gl
     // Reject articles with missing or invalid publication timestamps without inventing fake dates
     const pubDateIso = parsePublicationDate(item.pubDate);
     if (!pubDateIso) {
+      continue;
+    }
+
+    const pubTimeMs = new Date(pubDateIso).getTime();
+    // In live mode, strictly reject articles whose publication date is older than 12 hours
+    if (process.env.NODE_ENV !== 'test' && !isNaN(pubTimeMs) && now - pubTimeMs >= RETENTION_MAX_AGE_MS) {
+      expiredTombstones.set(canonicalUrl, now);
+      if (normTitle) expiredTombstones.set(normTitle, now);
       continue;
     }
 

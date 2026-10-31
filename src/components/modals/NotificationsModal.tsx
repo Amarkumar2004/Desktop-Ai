@@ -133,20 +133,28 @@ export default function NotificationsModal({
         };
       });
     } else {
+      const now = Date.now();
+      const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+      // Filter out any articles older than 12 hours from active view
+      const activeUnexpired = newsArticles.filter((a) => {
+        const time = new Date(a.seendate).getTime() || 0;
+        return now - time < TWELVE_HOURS_MS;
+      });
+
       // Active news feed: filter based on read/deleted status
       switch (newsFilterTab) {
         case 'unread':
-          baseList = newsArticles.filter((a) => !deletedIds.has(a.id) && !readIds.has(a.id));
+          baseList = activeUnexpired.filter((a) => !deletedIds.has(a.id) && !readIds.has(a.id));
           break;
         case 'read':
-          baseList = newsArticles.filter((a) => !deletedIds.has(a.id) && readIds.has(a.id));
+          baseList = activeUnexpired.filter((a) => !deletedIds.has(a.id) && readIds.has(a.id));
           break;
         case 'deleted':
-          baseList = newsArticles.filter((a) => deletedIds.has(a.id));
+          baseList = activeUnexpired.filter((a) => deletedIds.has(a.id));
           break;
         case 'all':
         default:
-          baseList = newsArticles.filter((a) => !deletedIds.has(a.id));
+          baseList = activeUnexpired.filter((a) => !deletedIds.has(a.id));
           break;
       }
     }
@@ -195,14 +203,23 @@ export default function NotificationsModal({
     searchQuery,
   ]);
 
-  const unreadNewsCount = useMemo(
-    () => newsArticles.filter((a) => !deletedIds.has(a.id) && !readIds.has(a.id)).length,
-    [newsArticles, deletedIds, readIds]
-  );
-  const deletedNewsCount = useMemo(
-    () => newsArticles.filter((a) => deletedIds.has(a.id)).length,
-    [newsArticles, deletedIds]
-  );
+  const unreadNewsCount = useMemo(() => {
+    const now = Date.now();
+    const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+    return newsArticles.filter((a) => {
+      const time = new Date(a.seendate).getTime() || 0;
+      return now - time < TWELVE_HOURS_MS && !deletedIds.has(a.id) && !readIds.has(a.id);
+    }).length;
+  }, [newsArticles, deletedIds, readIds]);
+
+  const deletedNewsCount = useMemo(() => {
+    const now = Date.now();
+    const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+    return newsArticles.filter((a) => {
+      const time = new Date(a.seendate).getTime() || 0;
+      return now - time < TWELVE_HOURS_MS && deletedIds.has(a.id);
+    }).length;
+  }, [newsArticles, deletedIds]);
   const savedNewsCount = useMemo(() => bookmarkedRecords.size, [bookmarkedRecords]);
 
   const handleToggleRead = useCallback(

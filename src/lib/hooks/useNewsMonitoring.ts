@@ -58,7 +58,13 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
         if (raw) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            return parsed.sort(sortArticlesNewestFirst);
+            const now = Date.now();
+            const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+            const valid = parsed.filter((a) => {
+              const artTime = new Date(a.seendate).getTime() || a.ingestedAtMs || now;
+              return now - artTime < TWELVE_HOURS_MS;
+            });
+            return valid.sort(sortArticlesNewestFirst);
           }
         }
       } catch {}
@@ -157,14 +163,19 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
         }
 
         // Merge incoming articles with existing state so previous unexpired articles aren't lost,
-        // and strictly sort so newly arrived articles and latest news are placed at the top.
+        // strictly delete anything older than 12 hours, and place newly arrived news at the top.
         setArticles((prev) => {
           const map = new Map<string, GlobalNewsArticle>();
-          for (const item of processed) {
-            map.set(item.id, item);
-          }
           const now = Date.now();
           const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+
+          for (const item of processed) {
+            const artTime = new Date(item.seendate).getTime() || item.ingestedAtMs || now;
+            if (now - artTime < TWELVE_HOURS_MS) {
+              map.set(item.id, item);
+            }
+          }
+
           for (const prevArt of prev) {
             if (!map.has(prevArt.id)) {
               const artTime = new Date(prevArt.seendate).getTime() || prevArt.ingestedAtMs || now;
@@ -250,6 +261,38 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
     };
   }, [fetchNews]);
 
+  // Periodic 60-second expiry sweep: automatically purges articles older than 12 hours from active state
+  // and immediately triggers a refresh for new news if the feed drops to empty.
+  useEffect(() => {
+    const sweepInterval = setInterval(() => {
+      const now = Date.now();
+      const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+      setArticles((prev) => {
+        const remaining = prev.filter((a) => {
+          const artTime = new Date(a.seendate).getTime() || a.ingestedAtMs || now;
+          return now - artTime < TWELVE_HOURS_MS;
+        });
+        if (remaining.length !== prev.length) {
+          const activeHighlights = computeCountryHighlights(remaining);
+          setCountryHighlights(activeHighlights);
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem(LS_NEWS_ARTICLES, JSON.stringify(remaining));
+              localStorage.setItem(LS_NEWS_HIGHLIGHTS, JSON.stringify(activeHighlights));
+            } catch {}
+          }
+          if (remaining.length === 0) {
+            fetchNews(true);
+          }
+          return remaining;
+        }
+        return prev;
+      });
+    }, 60_000);
+
+    return () => clearInterval(sweepInterval);
+  }, [fetchNews]);
+
   const selectCountry = useCallback((code: string | null) => {
     setSelectedCountryCode((prev) => (prev === code ? null : code));
   }, []);
@@ -259,12 +302,20 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
   }, [fetchNews]);
 
   const filteredArticles = useMemo(() => {
+    const now = Date.now();
+    const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+    // Exclude any articles older than 12 hours
+    const unexpired = articles.filter((a) => {
+      const artTime = new Date(a.seendate).getTime() || a.ingestedAtMs || now;
+      return now - artTime < TWELVE_HOURS_MS;
+    });
+
     const list = selectedCountryCode
-      ? articles.filter((art) => {
+      ? unexpired.filter((art) => {
           const target = selectedCountryCode.toUpperCase();
           return art.countries.some((c) => c.code === target || c.code3 === target);
         })
-      : articles;
+      : unexpired;
 
     return [...list].sort(sortArticlesNewestFirst);
   }, [articles, selectedCountryCode]);

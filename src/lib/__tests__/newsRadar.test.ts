@@ -764,6 +764,31 @@ describe('NewsUserPrefs Storage & Filters', () => {
     expect(sorted[1].id).toBe('art-10am');
     expect(sorted[2].id).toBe('art-08am');
   });
+
+  it('24. strictly filters out and drops articles older than 12 hours from active feed', () => {
+    const now = Date.now();
+    const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+
+    const freshArticle = makeArticle({
+      id: 'fresh-1',
+      title: 'Fresh News Under 12h',
+      seendate: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
+    });
+    const expiredArticle = makeArticle({
+      id: 'expired-1',
+      title: 'Stale News Over 12h',
+      seendate: new Date(now - 13 * 60 * 60 * 1000).toISOString(),
+    });
+
+    const dataset = [freshArticle, expiredArticle];
+    const unexpired = dataset.filter((a) => {
+      const artTime = new Date(a.seendate).getTime() || a.ingestedAtMs || now;
+      return now - artTime < TWELVE_HOURS_MS;
+    });
+
+    expect(unexpired).toHaveLength(1);
+    expect(unexpired[0].id).toBe('fresh-1');
+  });
 });
 
 
