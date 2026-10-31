@@ -13,6 +13,9 @@ export interface AuthenticatedContext {
 export async function getAuthenticatedUser(): Promise<User | null> {
   try {
     const supabase = await createServerClient();
+    if (!supabase) {
+      return null;
+    }
     const { data: { user }, error } = await supabase.auth.getUser();
 
     if (error || !user) {

@@ -45,34 +45,95 @@ function getInitials(name: string): string {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+import { createClient as createSupabaseClient, isSupabaseConfigured } from '@/backend/supabase/client';
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
-  // Restore session from localStorage on load
+  // Restore session from Supabase if configured, otherwise localStorage
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY_AUTH);
-      if (stored) {
-        setUser(JSON.parse(stored));
-      } else {
-        // Initial active session default for seamless workspace experience
-        setUser(DEFAULT_USER);
-        localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(DEFAULT_USER));
+    let mounted = true;
+
+    async function initSession() {
+      try {
+        if (isSupabaseConfigured()) {
+          const supabase = createSupabaseClient();
+          if (supabase) {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.user) {
+              const u = session.user;
+              const profile: UserProfile = {
+                id: u.id,
+                email: u.email || 'user@susi.ai',
+                fullName: u.user_metadata?.full_name || u.email?.split('@')[0] || 'User',
+                workspaceName: u.user_metadata?.workspace_name || 'My Workspace',
+                role: 'Workspace Member',
+                avatarInitials: getInitials(u.user_metadata?.full_name || u.email || 'User'),
+                createdAt: u.created_at,
+              };
+              if (mounted) setUser(profile);
+              localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(profile));
+              return;
+            }
+          }
+        }
+
+        const stored = localStorage.getItem(STORAGE_KEY_AUTH);
+        if (stored) {
+          if (mounted) setUser(JSON.parse(stored));
+        } else {
+          if (mounted) setUser(DEFAULT_USER);
+          localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(DEFAULT_USER));
+        }
+      } catch {
+        if (mounted) setUser(DEFAULT_USER);
+      } finally {
+        if (mounted) setIsLoading(false);
       }
-    } catch {
-      setUser(DEFAULT_USER);
-    } finally {
-      setIsLoading(false);
     }
+
+    initSession();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  const login = useCallback(async (email: string, _password?: string) => {
+  const login = useCallback(async (email: string, password?: string) => {
     setIsLoading(true);
     try {
-      // Simulate real auth handshake / Supabase integration
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      if (isSupabaseConfigured() && password) {
+        const supabase = createSupabaseClient();
+        if (supabase) {
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+          });
+          if (error) {
+            return { success: false, error: error.message };
+          }
+          if (data.user) {
+            const u = data.user;
+            const activeUser: UserProfile = {
+              id: u.id,
+              email: u.email || email,
+              fullName: u.user_metadata?.full_name || email.split('@')[0],
+              workspaceName: u.user_metadata?.workspace_name || 'My Workspace',
+              role: 'Workspace Member',
+              avatarInitials: getInitials(u.user_metadata?.full_name || email),
+              createdAt: u.created_at,
+            };
+            setUser(activeUser);
+            localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(activeUser));
+            return { success: true };
+          }
+        }
+      }
+
+      // Offline / Local Workspace session handling
+      await new Promise((resolve) => setTimeout(resolve, 300));
 
       const existingStored = localStorage.getItem(STORAGE_KEY_AUTH);
       let activeUser: UserProfile = DEFAULT_USER;
@@ -115,6 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fullName,
     email,
     workspaceName,
+    password,
   }: {
     fullName: string;
     email: string;
@@ -123,7 +185,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }) => {
     setIsLoading(true);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      if (isSupabaseConfigured() && password) {
+        const supabase = createSupabaseClient();
+        if (supabase) {
+          const { data, error } = await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+              data: {
+                full_name: fullName.trim(),
+                workspace_name: workspaceName.trim() || 'My Workspace',
+              },
+            },
+          });
+          if (error) {
+            return { success: false, error: error.message };
+          }
+          if (data.user) {
+            const newUser: UserProfile = {
+              id: data.user.id,
+              email: data.user.email || email.trim(),
+              fullName: fullName.trim(),
+              workspaceName: workspaceName.trim() || 'My Workspace',
+              role: 'Workspace Admin',
+              avatarInitials: getInitials(fullName),
+              createdAt: new Date().toISOString(),
+            };
+            setUser(newUser);
+            localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(newUser));
+            return { success: true };
+          }
+        }
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 400));
 
       const newUser: UserProfile = {
         id: `usr-${Date.now()}`,
@@ -147,6 +242,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    if (isSupabaseConfigured()) {
+      try {
+        const supabase = createSupabaseClient();
+        if (supabase) {
+          await supabase.auth.signOut();
+        }
+      } catch {
+        // Ignore signout error
+      }
+    }
     localStorage.removeItem(STORAGE_KEY_AUTH);
     setUser(null);
     router.push('/login');
