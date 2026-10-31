@@ -30,4 +30,30 @@ describe('Gemini Interactions API Route & Ollama Fallback', () => {
       expect(streamData).toContain('sourceProvider');
     }
   });
+
+  it('correctly detects OPEN_APP action for "open chrome"', async () => {
+    const req = new NextRequest('http://localhost:3000/api/voice/stream', {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'open chrome' }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const reader = res.body?.getReader();
+    expect(reader).toBeDefined();
+
+    if (reader) {
+      const decoder = new TextDecoder();
+      let streamData = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        streamData += decoder.decode(value);
+      }
+
+      expect(streamData).toContain('OPEN_APP');
+      expect(streamData).toContain('chrome');
+    }
+  });
 });
