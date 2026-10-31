@@ -601,6 +601,20 @@ export function processRawArticles(rawList: any[], now = Date.now()): GlobalNews
     seenUrls.add(canonicalUrl);
     seenTitles.add(normTitle);
 
+    // Reject articles with missing or invalid publication timestamps without inventing fake dates
+    const pubDateIso = parsePublicationDate(raw.seendate);
+    if (!pubDateIso) {
+      continue;
+    }
+
+    const pubTimeMs = new Date(pubDateIso).getTime();
+    // In live mode, strictly reject articles whose publication date is older than 12 hours
+    if (process.env.NODE_ENV !== 'test' && !isNaN(pubTimeMs) && now - pubTimeMs >= RETENTION_MAX_AGE_MS) {
+      expiredTombstones.set(canonicalUrl, now);
+      if (normTitle) expiredTombstones.set(normTitle, now);
+      continue;
+    }
+
     // Determine reliable server ingestion timestamp (12-hour server retention starts here)
     const existing = knownIngestionMap.get(canonicalUrl);
     let firstIngestedAt: string;
@@ -621,22 +635,12 @@ export function processRawArticles(rawList: any[], now = Date.now()): GlobalNews
       firstIngestedAt = new Date(now).toISOString();
       ingestedAtMs = now;
       knownIngestionMap.set(canonicalUrl, { firstIngestedAt, ingestedAtMs });
-      isNew = true;
-      newlyIngestedInLastFetchCount += 1;
-    }
-
-    // Reject articles with missing or invalid publication timestamps without inventing fake dates
-    const pubDateIso = parsePublicationDate(raw.seendate);
-    if (!pubDateIso) {
-      continue;
-    }
-
-    const pubTimeMs = new Date(pubDateIso).getTime();
-    // In live mode, strictly reject articles whose publication date is older than 12 hours
-    if (process.env.NODE_ENV !== 'test' && !isNaN(pubTimeMs) && now - pubTimeMs >= RETENTION_MAX_AGE_MS) {
-      expiredTombstones.set(canonicalUrl, now);
-      if (normTitle) expiredTombstones.set(normTitle, now);
-      continue;
+      // An article is only flagged as 'NEW' if it was published within the last 45 minutes
+      const isFreshPublication = !isNaN(pubTimeMs) && (now - pubTimeMs <= 45 * 60 * 1000);
+      isNew = isFreshPublication;
+      if (isNew) {
+        newlyIngestedInLastFetchCount += 1;
+      }
     }
 
     // Detect genuine countries associated with the article headline/subject text
@@ -684,16 +688,17 @@ export function processRawArticles(rawList: any[], now = Date.now()): GlobalNews
 }
 
 export function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, ' ')
+  const decoded = html
     .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&#039;/g, "'")
     .replace(/&apos;/g, "'")
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/&nbsp;/g, ' ');
+
+  return decoded.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -869,6 +874,20 @@ export function processRawRssArticles(items: RawRssItem[], now = Date.now()): Gl
     seenUrls.add(canonicalUrl);
     seenTitles.add(normTitle);
 
+    // Reject articles with missing or invalid publication timestamps without inventing fake dates
+    const pubDateIso = parsePublicationDate(item.pubDate);
+    if (!pubDateIso) {
+      continue;
+    }
+
+    const pubTimeMs = new Date(pubDateIso).getTime();
+    // In live mode, strictly reject articles whose publication date is older than 12 hours
+    if (process.env.NODE_ENV !== 'test' && !isNaN(pubTimeMs) && now - pubTimeMs >= RETENTION_MAX_AGE_MS) {
+      expiredTombstones.set(canonicalUrl, now);
+      if (normTitle) expiredTombstones.set(normTitle, now);
+      continue;
+    }
+
     // Determine reliable server ingestion timestamp (12-hour server retention starts here)
     const existing = knownIngestionMap.get(canonicalUrl);
     let firstIngestedAt: string;
@@ -887,22 +906,12 @@ export function processRawRssArticles(items: RawRssItem[], now = Date.now()): Gl
       firstIngestedAt = new Date(now).toISOString();
       ingestedAtMs = now;
       knownIngestionMap.set(canonicalUrl, { firstIngestedAt, ingestedAtMs });
-      isNew = true;
-      newlyIngestedInLastFetchCount += 1;
-    }
-
-    // Reject articles with missing or invalid publication timestamps without inventing fake dates
-    const pubDateIso = parsePublicationDate(item.pubDate);
-    if (!pubDateIso) {
-      continue;
-    }
-
-    const pubTimeMs = new Date(pubDateIso).getTime();
-    // In live mode, strictly reject articles whose publication date is older than 12 hours
-    if (process.env.NODE_ENV !== 'test' && !isNaN(pubTimeMs) && now - pubTimeMs >= RETENTION_MAX_AGE_MS) {
-      expiredTombstones.set(canonicalUrl, now);
-      if (normTitle) expiredTombstones.set(normTitle, now);
-      continue;
+      // An article is only flagged as 'NEW' if it was published within the last 45 minutes
+      const isFreshPublication = !isNaN(pubTimeMs) && (now - pubTimeMs <= 45 * 60 * 1000);
+      isNew = isFreshPublication;
+      if (isNew) {
+        newlyIngestedInLastFetchCount += 1;
+      }
     }
 
     // Extract countries from title and available description/summary

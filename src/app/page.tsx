@@ -36,6 +36,7 @@ import VoiceCard from '@/components/cards/VoiceCard';
 import GlobalOverviewCard from '@/components/cards/GlobalOverviewCard';
 import { useNewsMonitoring } from '@/lib/hooks/useNewsMonitoring';
 import { useNewsUserPrefs } from '@/lib/hooks/useNewsUserPrefs';
+import { formatTimeAgo } from '@/lib/countryDetection';
 import ConsoleCard from '@/components/cards/ConsoleCard';
 import WorkforceAgentsView from '@/components/views/WorkforceAgentsView';
 import TaskQueueView from '@/components/views/TaskQueueView';
@@ -1127,7 +1128,7 @@ function DashboardContent() {
                                 {article.title}
                               </a>
                               <div className="flex items-center gap-1.5 mt-1 text-[9px] text-stone-400 flex-wrap">
-                                <span className="font-mono">{article.timeAgo}</span>
+                                <span className="font-mono">{formatTimeAgo(article.seendate) || article.timeAgo}</span>
                                 <span>•</span>
                                 <span className="text-stone-500">{article.domain}</span>
                                 {article.category && (

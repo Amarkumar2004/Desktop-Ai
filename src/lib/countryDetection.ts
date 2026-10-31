@@ -938,30 +938,54 @@ export type NewsCategory = 'All' | 'Technology' | 'Politics' | 'Finance' | 'Scie
  * based on headline and summary text. No fake or fabricated categories.
  */
 export function classifyArticleCategory(title: string, summary?: string): NewsCategory {
-  const text = `${title} ${summary || ''}`.toLowerCase();
+  const cleanSummary = (summary || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .toLowerCase();
+  const cleanTitle = (title || '').toLowerCase();
+  const text = `${cleanTitle} ${cleanSummary}`;
 
-  // Science & Health & Astronomy
-  if (/\b(?:science|scientist|climate|carbon|physics|biology|cancer|medical|vaccine|disease|virus|health|astronomy|nasa|planet|telescope|exoplanet|space|satellite|fossil|species|ebola|epidemic)\b/i.test(text)) {
-    return 'Science';
-  }
-
-  // Technology
-  if (/\b(?:ai|artificial intelligence|robotics?|semiconductors?|chips?|software|cybersecurity|cyber|quantum|computing|tech|algorithm|nvidia|openai|microsoft|apple|google|crypto|blockchain|gadget|hardware)\b/i.test(text)) {
-    return 'Technology';
-  }
-
-  // Politics & Defense
-  if (/\b(?:election|parliament|congress|senate|minister|president|diplomat|treaty|bill|military|defense|pentagon|war|ceasefire|sanctions|court|judge|protest|government|regime|junta)\b/i.test(text)) {
+  // 1. Politics, Defense, Governance & Law (high priority for ministers, military, elections)
+  if (
+    /\b(?:election|electoral|voter|voting|ballot|poll|parliament|congress|senate|minister|ministry|president|prime minister|chief minister|diplomat|treaty|bill|legislation|military|defense|pentagon|war|ceasefire|sanctions|court|judge|protest|government|regime|junta|iaf|army|navy|air force|air chief|marshal|impeachment|opposition|bjp|yogi|kharge|modi|gandhi|rahul|adityanath|biden|trump|putin|zelensky|netanyahu|un mission|envoy|ambassador|sovereignty)\b/i.test(
+      text
+    )
+  ) {
     return 'Politics';
   }
 
-  // Finance & Business
-  if (/\b(?:economy|economic|market|stock|inflation|bank|banking|gdp|trade|tariff|fed|federal reserve|investor|shares|revenue|profit|imf|interest rate|currency|bonds|wall street)\b/i.test(text)) {
+  // 2. Finance, Economy, Business & Markets
+  if (
+    /\b(?:economy|economic|market|stock|shares|inflation|bank|banking|gdp|trade|tariff|fed|federal reserve|investor|revenue|profit|imf|interest rate|currency|bonds|wall street|rupee|dollar|quarterly|q1|q2|q3|q4|earnings|box office|commercial|cost of living|fiscal)\b/i.test(
+      text
+    )
+  ) {
     return 'Finance';
+  }
+
+  // 3. Science, Space, Astronomy, Climate, Health & Environment
+  if (
+    /\b(?:science|scientist|climate|carbon|physics|biology|cancer|medical|vaccine|disease|virus|health|astronomy|nasa|planet|mars|meteorite|telescope|exoplanet|space|satellite|fossil|species|ebola|epidemic|laboratory|isro)\b/i.test(
+      text
+    )
+  ) {
+    return 'Science';
+  }
+
+  // 4. Technology, AI & Computing (excluding search syndicators like google)
+  if (
+    /\b(?:artificial intelligence|genai|generative ai|robotics?|semiconductors?|microchip|chips?|software|cybersecurity|cyberattack|cyber|quantum computing|algorithm|openai|chatgpt|deepmind|hardware|gadget|cryptocurrency|crypto|blockchain|smartphones?|iphone|android|telecom|supercomputer|nvidia)\b/i.test(
+      text
+    ) ||
+    /\b(?:tech|computing)\b/i.test(cleanTitle) ||
+    /\bAI\b/.test(title)
+  ) {
+    return 'Technology';
   }
 
   return 'World';
 }
+
 
 /**
  * Format GDELT seendate or ISO date to relative time ("12m ago", "1h ago")

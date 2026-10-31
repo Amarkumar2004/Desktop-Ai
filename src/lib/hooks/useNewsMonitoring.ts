@@ -174,18 +174,27 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
             discoveredAtMapRef.current.get(stableId) ??
             (norm ? discoveredAtMapRef.current.get(norm) : undefined);
 
+          // An article is only eligible for the 'NEW' badge if published within the last 45 minutes
+          const pubTimeMs = new Date(art.seendate).getTime();
+          const isFreshPublication = !isNaN(pubTimeMs) && nowMs - pubTimeMs <= 45 * 60 * 1000;
+
           let isNew = false;
-          if (!isFirstLoad) {
+          if (!isFirstLoad && isFreshPublication) {
             if (existingDisc !== undefined) {
               // Retain active new status as long as within the 5-minute freshness window
               isNew = existingDisc > 0 && nowMs - existingDisc < NEW_ARTICLE_TTL_MS;
             } else {
-              // Truly newly arrived article in this poll
+              // Truly newly arrived fresh article in this poll
               discoveredAtMapRef.current.set(stableId, nowMs);
               if (norm) discoveredAtMapRef.current.set(norm, nowMs);
               seenArticleIdsRef.current.add(stableId);
               isNew = true;
             }
+          } else if (existingDisc === undefined) {
+            // Older publication or first load: register as seen so it never gets tagged NEW later
+            discoveredAtMapRef.current.set(stableId, 0);
+            if (norm) discoveredAtMapRef.current.set(norm, 0);
+            seenArticleIdsRef.current.add(stableId);
           }
 
           return { ...art, id: stableId, isNew };
@@ -218,7 +227,9 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
                   discoveredAtMapRef.current.get(prevArt.id) ??
                   (norm ? discoveredAtMapRef.current.get(norm) : undefined) ??
                   0;
-                const stillNew = disc > 0 && now - disc < NEW_ARTICLE_TTL_MS;
+                const prevPubTime = new Date(prevArt.seendate).getTime();
+                const isFreshPub = !isNaN(prevPubTime) && now - prevPubTime <= 45 * 60 * 1000;
+                const stillNew = isFreshPub && disc > 0 && now - disc < NEW_ARTICLE_TTL_MS;
                 map.set(prevArt.id, { ...prevArt, isNew: stillNew });
                 if (norm) titleSet.add(norm);
               }
