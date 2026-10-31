@@ -228,7 +228,7 @@ export async function POST(req: NextRequest) {
 
       if (isValidKey) {
         console.log(`[Gemini API] Requesting Gemini for prompt: "${prompt.slice(0, 50)}..."`);
-        const candidateModels = ['gemini-3.5-flash', 'gemini-3.8-flash'];
+        const candidateModels = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash'];
         const historyText = history
           .slice(-4)
           .map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`)
@@ -251,7 +251,7 @@ export async function POST(req: NextRequest) {
                     },
                   ],
                 }),
-                signal: AbortSignal.timeout(12000),
+                signal: AbortSignal.timeout(15000),
               }
             );
 
@@ -263,7 +263,7 @@ export async function POST(req: NextRequest) {
                 resData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
 
               if (replyText) {
-                console.log(`[Gemini API] Received reply (${replyText.length} chars). Streaming to voice engine...`);
+                console.log(`[Gemini API] Received reply (${replyText.length} chars) from ${model}. Streaming to voice engine...`);
                 // Stream words as tokens for natural typing & speech synthesis
                 const words = replyText.split(' ');
                 for (let i = 0; i < words.length; i++) {
@@ -310,8 +310,10 @@ export async function POST(req: NextRequest) {
         return;
       }
 
-      // Fallback message if both providers are inactive
-      const fallbackText = `Haan ji, maine "${prompt}" sun liya hai. Gemini API key add karte hi ya Ollama start hote hi full AI active ho jayega!`;
+      // Fallback message if providers are temporarily inactive
+      const fallbackText = isValidKey
+        ? `Haan ji, maine "${prompt}" sun liya hai. Cloud server par momentary load tha, kripya ek baar dobara boliye!`
+        : `Haan ji, maine "${prompt}" sun liya hai. Gemini API key add karte hi ya Ollama start hote hi full AI active ho jayega!`;
       sendEvent('token', { token: fallbackText });
       sendEvent('done', {
         fullReply: fallbackText,
