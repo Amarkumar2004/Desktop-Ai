@@ -213,9 +213,15 @@ export class Worker implements WorkerCtx {
 
   hideEmote() {
     if (!this.emoteSprite) return;
-    this.emoteSprite.removeAllListeners("animationcomplete");
-    this.emoteSprite.setVisible(false);
-    this.emoteSprite.stop();
+    try {
+      this.emoteSprite.removeAllListeners("animationcomplete");
+      this.emoteSprite.setVisible(false);
+      if (this.emoteSprite.anims && typeof this.emoteSprite.anims.stop === 'function') {
+        this.emoteSprite.stop();
+      }
+    } catch {
+      // Safe teardown
+    }
     this.currentEmoteKey = null;
   }
 
@@ -417,25 +423,29 @@ export class Worker implements WorkerCtx {
 
   destroy() {
     if (this.initTimer) {
-      this.initTimer.destroy();
+      try { this.initTimer.destroy(); } catch {}
       this.initTimer = null;
     }
     this.interactionLocked = false;
-    this.stopIdleActivity();
+    try {
+      this.stopIdleActivity();
+    } catch {}
     if (this.taskVisualTimer) {
-      this.taskVisualTimer.destroy();
+      try { this.taskVisualTimer.destroy(); } catch {}
       this.taskVisualTimer = null;
     }
     if (this.emoteSprite) {
-      this.emoteSprite.removeAllListeners();
-      this.emoteSprite.destroy();
+      try {
+        this.emoteSprite.removeAllListeners();
+        this.emoteSprite.destroy();
+      } catch {}
       this.emoteSprite = null;
     }
-    this.sprite.destroy();
-    this.nameTag.destroy();
-    this.taskStatusText.destroy();
-    this.statusDot.destroy();
-    this.bubble.destroy();
+    try { this.sprite?.destroy(); } catch {}
+    try { this.nameTag?.destroy(); } catch {}
+    try { this.taskStatusText?.destroy(); } catch {}
+    try { this.statusDot?.destroy(); } catch {}
+    try { this.bubble?.destroy(); } catch {}
     this.pathfinder = null;
     this.onArrival = null;
   }

@@ -41,6 +41,9 @@ export default function PhaserMap({ onSelectAgent }: PhaserMapProps) {
         mode: Phaser.Scale.FIT,
         autoCenter: Phaser.Scale.CENTER_BOTH,
       },
+      audio: {
+        noAudio: true,
+      },
       scene: {
         preload: function (this: Phaser.Scene) {
           // 1. Preload HQ Map

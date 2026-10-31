@@ -20,4 +20,7 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
       gravity: { x: 0, y: 0 },
     },
   },
+  audio: {
+    noAudio: true,
+  },
 };

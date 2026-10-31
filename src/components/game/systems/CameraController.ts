@@ -70,8 +70,14 @@ export class CameraController {
   }
 
   private initWheel(cam: Phaser.Cameras.Scene2D.Camera) {
-    const canvas = this.scene.game.canvas;
+    const canvas = this.scene?.game?.canvas;
+    if (!canvas) return;
+
     const onWheel = (e: WheelEvent) => {
+      if (!cam || !cam.scaleManager?.displayScale || !this.scene?.game) {
+        canvas.removeEventListener("wheel", onWheel);
+        return;
+      }
       e.preventDefault();
       const delta = e.ctrlKey ? e.deltaY * 3 : e.deltaY;
       const oldZoom = cam.zoom;
@@ -79,8 +85,11 @@ export class CameraController {
       const newZoom = Phaser.Math.Clamp(oldZoom - delta * ZOOM_SENSITIVITY, minZoom, 2.8);
       if (Math.abs(newZoom - oldZoom) < 0.001) return;
 
-      const sx = e.offsetX / cam.scaleManager.displayScale.x;
-      const sy = e.offsetY / cam.scaleManager.displayScale.y;
+      const scale = cam.scaleManager.displayScale;
+      if (!scale.x || !scale.y) return;
+
+      const sx = e.offsetX / scale.x;
+      const sy = e.offsetY / scale.y;
       const worldBefore = cam.getWorldPoint(sx, sy);
       cam.setZoom(newZoom);
       this.updateCameraBounds();
@@ -90,7 +99,8 @@ export class CameraController {
       cam.scrollY += worldBefore.y - worldAfter.y;
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
-    this.scene.events.once("shutdown", () => canvas.removeEventListener("wheel", onWheel));
+    this.scene.events?.once("shutdown", () => canvas.removeEventListener("wheel", onWheel));
+    this.scene.events?.once("destroy", () => canvas.removeEventListener("wheel", onWheel));
   }
 
   initCameraDrag(cam: Phaser.Cameras.Scene2D.Camera) {
