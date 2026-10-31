@@ -24,6 +24,8 @@ import { AudioQueue } from './AudioQueue';
 import { BargeInController } from './BargeInController';
 import { ConversationManager } from './ConversationManager';
 import { TaskOrchestrator } from './TaskOrchestrator';
+import { permissionManager } from '@/lib/security/permissionManager';
+import { ApprovalService } from '@/lib/security/approvalService';
 
 export interface VoiceTimingMetrics {
   sttDurationMs: number;
@@ -56,6 +58,7 @@ export class VoiceEngine {
   // Active state management
   private autoListenTimer: NodeJS.Timeout | null = null;
   private activeAbortController: AbortController | null = null;
+  private unsubscribePermission: (() => void) | null = null;
   private lastMetrics: VoiceTimingMetrics = {
     sttDurationMs: 0,
     firstTokenMs: 0,
@@ -152,6 +155,20 @@ export class VoiceEngine {
     this.wakeWord.start(() => {
       if (this.state === 'speaking' || this.audioQueue.isBusy()) {
         this.bargeIn.triggerInterruption();
+      }
+    });
+
+    // 5. Permission Gatekeeper hook (speaks permission prompt to user)
+    this.unsubscribePermission = permissionManager.subscribe((req) => {
+      if (req && req.status === 'PENDING') {
+        const promptToSpeak =
+          this.language === 'hi-IN'
+            ? req.voicePromptHi || 'Kya aap is action ki ijazat dete hain?'
+            : req.voicePromptEn || 'Do you authorize this action?';
+
+        console.log(`[VoiceEngine] Speaking permission request: "${promptToSpeak}"`);
+        this.enqueueChunkToAudioQueue(promptToSpeak);
+        this.setState('speaking');
       }
     });
   }
@@ -336,6 +353,35 @@ export class VoiceEngine {
       return null;
     }
     this.lastProcessedUtterance = { text: trimmed, timestamp: now };
+
+    // 0. Permission Gatekeeper Interceptor: Check if active permission request is awaiting decision
+    const activePerm = permissionManager.getActiveRequest();
+    if (activePerm && activePerm.status === 'PENDING') {
+      const voiceDecision = ApprovalService.handleVoiceInput(trimmed);
+      if (voiceDecision.handled) {
+        const isApproved = voiceDecision.decision === 'APPROVED';
+        const reply = isApproved
+          ? (this.language === 'hi-IN' ? 'Ijazat mil gayi hai. Action execute kiya ja raha hai.' : 'Permission granted. Executing action.')
+          : (this.language === 'hi-IN' ? 'Action cancel kar diya gaya hai.' : 'Action has been cancelled.');
+
+        this.conversation.addUserTurn(trimmed);
+        this.conversation.addAssistantTurn(reply);
+        this.transcriptListeners.forEach((cb) => cb(trimmed, true));
+        this.enqueueChunkToAudioQueue(reply);
+        this.setState('speaking');
+
+        const result: VoiceProcessResult = {
+          replyText: reply,
+          assignedAgent: 'SUSI',
+          modeUsed: 'offline',
+          sourceProvider: 'local_smart',
+          modelName: 'Permission Gatekeeper',
+          action: { type: 'CHAT_REPLY' },
+        };
+        this.responseListeners.forEach((cb) => cb(result));
+        return result;
+      }
+    }
 
     const requestStartTime = performance.now();
     let firstTokenRecorded = false;
@@ -604,6 +650,10 @@ export class VoiceEngine {
     if (this.activeAbortController) {
       this.activeAbortController.abort();
       this.activeAbortController = null;
+    }
+    if (this.unsubscribePermission) {
+      this.unsubscribePermission();
+      this.unsubscribePermission = null;
     }
     this.vad.stop();
     this.stt.cleanup();

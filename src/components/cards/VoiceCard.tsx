@@ -16,6 +16,8 @@ import type { ProviderConnectionMetadata } from '@/types/aiProviders';
 import { HybridVoiceEngine, VoiceMode, VoiceState, VoiceProcessResult } from '@/lib/voice/HybridVoiceEngine';
 import { createTask } from '@/backend/services/taskService';
 import { useToast } from '@/lib/toast/ToastContext';
+import { ApprovalService } from '@/lib/security/approvalService';
+import { PermissionRequest } from '@/lib/security/types';
 
 interface VoiceHistoryItem {
   role: 'user' | 'assistant';
@@ -103,6 +105,7 @@ export default function OracleVoiceCard({
   const [continuousMode, setContinuousMode] = useState<boolean>(true);
   const [sessionState, setSessionState] = useState<VoiceState>('idle');
   const [liveTranscript, setLiveTranscript] = useState<string>('');
+  const [pendingPerm, setPendingPerm] = useState<PermissionRequest | null>(null);
 
   const engineRef = useRef<HybridVoiceEngine | null>(null);
   const stateRef = useRef<VoiceState>('idle');
@@ -124,6 +127,13 @@ export default function OracleVoiceCard({
   useEffect(() => {
     propsRef.current = { onCommand, onSelectTab, success, info, errorToast };
   });
+
+  // Listen to active permission changes
+  useEffect(() => {
+    return ApprovalService.onPermissionChange((req) => {
+      setPendingPerm(req);
+    });
+  }, []);
 
   // Initialize Hybrid Voice Engine (mount only once)
   useEffect(() => {
@@ -635,6 +645,16 @@ export default function OracleVoiceCard({
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${stateBadge[sessionState]}`}>
                   {stateLabel[sessionState]}
                 </span>
+                {pendingPerm && pendingPerm.status === 'PENDING' && (
+                  <div className="mt-1 flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-400 text-center animate-pulse">
+                    <span className="text-[10px] font-bold text-amber-900">
+                      ⚡ Awaiting Voice Approval
+                    </span>
+                    <span className="text-[9.5px] text-amber-800 font-medium">
+                      Say "Haan / Allow" or "Nahi / Deny"
+                    </span>
+                  </div>
+                )}
                 {liveTranscript && (
                   <p className="mt-1 text-[11px] font-semibold text-stone-700 bg-white/90 border border-stone-200 px-3 py-1 rounded-lg max-w-[280px] truncate text-center shadow-2xs">
                     "{liveTranscript}"

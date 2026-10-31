@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal, Trash2, CornerDownLeft, CheckCircle2, Mic, Bot, Sparkles } from 'lucide-react';
+import { Terminal, Trash2, CornerDownLeft, CheckCircle2, Mic, Bot, Sparkles, AlertTriangle } from 'lucide-react';
+import { ApprovalService } from '@/lib/security/approvalService';
+import { PermissionRequest } from '@/lib/security/types';
 
 interface ConsoleCardProps {
   logs: string[];
@@ -13,8 +15,15 @@ export default function ConsoleCard({ logs, onClear, onRunCommand }: ConsoleCard
   const [inputVal, setInputVal] = useState('');
   const [history, setHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
+  const [pendingPerm, setPendingPerm] = useState<PermissionRequest | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    return ApprovalService.onPermissionChange((req) => {
+      setPendingPerm(req);
+    });
+  }, []);
 
   useEffect(() => {
     if (scrollContainerRef.current) {
@@ -27,6 +36,21 @@ export default function ConsoleCard({ logs, onClear, onRunCommand }: ConsoleCard
     if (!inputVal.trim()) return;
 
     const cmd = inputVal.trim();
+    const cmdLower = cmd.toLowerCase();
+
+    // Check if user is approving/denying active permission via chat
+    if (pendingPerm && pendingPerm.status === 'PENDING') {
+      if (['allow', 'yes', 'haan', 'ha', 'approve', 'ok'].includes(cmdLower)) {
+        ApprovalService.approveByChat(pendingPerm.id);
+        setInputVal('');
+        return;
+      } else if (['deny', 'no', 'nahi', 'na', 'reject', 'cancel'].includes(cmdLower)) {
+        ApprovalService.denyByChat(pendingPerm.id);
+        setInputVal('');
+        return;
+      }
+    }
+
     setHistory((prev) => [...prev, cmd]);
     setHistoryIdx(-1);
     onRunCommand(cmd);
@@ -205,6 +229,54 @@ export default function ConsoleCard({ logs, onClear, onRunCommand }: ConsoleCard
           ))}
         </div>
       </div>
+
+      {/* Interactive Chat Action Approval Card */}
+      {pendingPerm && pendingPerm.status === 'PENDING' && (
+        <div className="my-2 p-2.5 rounded-xl border border-amber-500/40 bg-amber-50/90 shadow-sm flex flex-col gap-1.5 animate-in fade-in">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 font-bold text-[11px] text-amber-900">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+              <span>Permission Request: {pendingPerm.actionType.replace(/_/g, ' ')}</span>
+            </div>
+            <span
+              className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border ${
+                pendingPerm.riskLevel === 'HIGH'
+                  ? 'bg-red-500/10 text-red-700 border-red-300'
+                  : 'bg-amber-500/10 text-amber-800 border-amber-300'
+              }`}
+            >
+              {pendingPerm.riskLevel} RISK
+            </span>
+          </div>
+          <div className="text-[10.5px] font-mono text-stone-800 bg-white p-1.5 rounded border border-stone-200 break-all select-all">
+            {pendingPerm.target}
+          </div>
+          {pendingPerm.metadata?.fileSize && (
+            <div className="text-[10px] text-stone-600">
+              Size: <span className="font-semibold text-stone-800">{String(pendingPerm.metadata.fileSize)}</span>
+            </div>
+          )}
+          <div className="text-[10px] text-stone-600 italic">
+            Reason: {pendingPerm.reason}
+          </div>
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => ApprovalService.denyByChat(pendingPerm.id)}
+              className="flex-1 py-1 px-2 rounded-lg bg-stone-200 hover:bg-red-100 hover:text-red-700 font-semibold text-[10.5px] text-stone-700 border border-stone-300 transition-colors cursor-pointer"
+            >
+              Deny
+            </button>
+            <button
+              type="button"
+              onClick={() => ApprovalService.approveByChat(pendingPerm.id)}
+              className="flex-1 py-1 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 font-bold text-[10.5px] text-white shadow-sm transition-colors cursor-pointer"
+            >
+              Allow
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Interactive Command Input Form */}
       <form onSubmit={handleSubmit} className="relative flex items-center pt-1">

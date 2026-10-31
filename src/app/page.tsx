@@ -50,6 +50,7 @@ import AnalyticsModal from '@/components/modals/AnalyticsModal';
 import MemoryModal from '@/components/modals/MemoryModal';
 import SettingsModal from '@/components/modals/SettingsModal';
 import DiagnosticsModal from '@/components/modals/DiagnosticsModal';
+import PermissionModal from '@/components/modals/PermissionModal';
 import UserDropdown from '@/components/account/UserDropdown';
 
 import { INITIAL_AGENTS, INITIAL_NOTIFICATIONS, INITIAL_METRICS } from '@/data/initialData';
@@ -1562,6 +1563,9 @@ function DashboardContent() {
         isOpen={isDiagnosticsModalOpen}
         onClose={() => setIsDiagnosticsModalOpen(false)}
       />
+
+      {/* TOP-LEVEL SECURITY PERMISSION MODAL */}
+      <PermissionModal />
     </div>
   );
 }
