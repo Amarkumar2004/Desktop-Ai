@@ -251,15 +251,28 @@ export async function POST(req: NextRequest) {
         }, { status: 403 });
       }
 
-      // Launch directly via Windows Explorer Shell (No script, No black CMD window)
+      // Launch directly on Windows desktop without scripts
       try {
         const isWin = process.platform === 'win32';
         if (isWin) {
-          const child = spawn('explorer.exe', [targetBinary], {
-            detached: true,
-            stdio: 'ignore',
+          const chromePaths = [
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+            `${process.env.LOCALAPPDATA || ''}\\Google\\Chrome\\Application\\chrome.exe`,
+          ];
+
+          let resolvedTarget = targetBinary;
+          if (targetBinary === 'chrome.exe' || targetBinary === 'chrome') {
+            const found = chromePaths.find((p) => fs.existsSync(p));
+            if (found) {
+              resolvedTarget = found;
+            }
+          }
+
+          // Windows 'start "" "<path>"' opens GUI app directly on the desktop
+          exec(`start "" "${resolvedTarget}"`, (err) => {
+            if (err) console.error('[OPEN_APP] Launch error:', err);
           });
-          child.unref();
         } else {
           const fallbackCmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
           const child = spawn(fallbackCmd, [targetBinary], {
