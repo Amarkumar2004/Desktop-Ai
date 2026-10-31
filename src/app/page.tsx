@@ -123,6 +123,8 @@ function DashboardContent() {
     countryHighlights,
     selectedCountryCode,
     selectCountry,
+    selectedCategory,
+    selectCategory,
     isLoading: isLoadingNews,
     isRateLimited: isNewsRateLimited,
     isStale: isNewsStale,
@@ -998,9 +1000,17 @@ function DashboardContent() {
                         </span>
                       )}
                       {newArticlesCount > 0 && (
-                        <span className="px-1.5 py-0.5 text-[9px] font-bold bg-amber-500 text-white rounded-full animate-pulse">
+                        <button
+                          onClick={() => selectCategory(selectedCategory === 'NEW' ? null : 'NEW')}
+                          title="Click to view new breaking news"
+                          className={`px-1.5 py-0.5 text-[9px] font-bold rounded-full transition-all cursor-pointer ${
+                            selectedCategory === 'NEW'
+                              ? 'bg-amber-600 text-white ring-2 ring-amber-300'
+                              : 'bg-amber-500 text-white hover:bg-amber-600 animate-pulse'
+                          }`}
+                        >
                           +{newArticlesCount} NEW
-                        </span>
+                        </button>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
@@ -1024,6 +1034,39 @@ function DashboardContent() {
                     </div>
                   </div>
 
+                  {/* Category Filter Pills ("all news categories") */}
+                  <div className="flex items-center gap-1 py-1.5 overflow-x-auto scrollbar-none border-b border-stone-100">
+                    {['All', 'World', 'Politics', 'Technology', 'Finance', 'Science'].map((cat) => {
+                      const isCatActive = cat === 'All' ? !selectedCategory : selectedCategory === cat;
+                      return (
+                        <button
+                          key={cat}
+                          onClick={() => selectCategory(cat === 'All' ? null : cat)}
+                          className={`px-2 py-0.5 rounded-full text-[9.5px] font-medium whitespace-nowrap transition-colors cursor-pointer border ${
+                            isCatActive
+                              ? 'bg-amber-100 text-amber-900 border-amber-300 font-bold shadow-xs'
+                              : 'bg-stone-50 text-stone-600 border-stone-200/80 hover:bg-stone-100 hover:text-stone-900'
+                          }`}
+                        >
+                          {cat}
+                        </button>
+                      );
+                    })}
+                    {newArticlesCount > 0 && (
+                      <button
+                        onClick={() => selectCategory(selectedCategory === 'NEW' ? null : 'NEW')}
+                        className={`px-2 py-0.5 rounded-full text-[9.5px] font-bold whitespace-nowrap transition-colors cursor-pointer border flex items-center gap-1 ${
+                          selectedCategory === 'NEW'
+                            ? 'bg-amber-500 text-white border-amber-600 shadow-xs'
+                            : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                        }`}
+                      >
+                        <span>🔥 New</span>
+                        <span className="text-[8.5px] px-1 bg-white/40 rounded-full font-mono">{newArticlesCount}</span>
+                      </button>
+                    )}
+                  </div>
+
                   {/* Active country filter banner */}
                   {selectedCountryCode && (
                     <div className="my-1.5 flex items-center justify-between text-[10px] bg-amber-50 text-amber-900 border border-amber-200/70 rounded-md px-2 py-0.5">
@@ -1039,9 +1082,22 @@ function DashboardContent() {
 
                   <div className="space-y-2.5 my-2 max-h-[280px] overflow-y-auto pr-0.5 flex-1 scrollbar-thin">
                     {filteredNewsArticles.length === 0 ? (
-                      <p className="text-[11px] text-stone-400 py-3 text-center italic">
-                        No articles match this country filter.
-                      </p>
+                      <div className="text-center py-4 space-y-1">
+                        <p className="text-[11px] text-stone-400 italic">
+                          No articles match this filter.
+                        </p>
+                        {(selectedCategory || selectedCountryCode) && (
+                          <button
+                            onClick={() => {
+                              selectCategory(null);
+                              selectCountry(null);
+                            }}
+                            className="text-[10px] text-amber-600 font-semibold underline hover:text-amber-800 cursor-pointer"
+                          >
+                            Reset filters
+                          </button>
+                        )}
+                      </div>
                     ) : (
                       filteredNewsArticles.map((article) => {
                         const hasCountry = article.countries.length > 0;
@@ -1054,9 +1110,9 @@ function DashboardContent() {
                         return (
                           <div
                             key={article.id}
-                            className={`flex items-start gap-2 text-xs p-1 rounded-lg transition-colors group ${
+                            className={`flex items-start gap-2 text-xs p-1.5 rounded-lg transition-colors group ${
                               article.isNew
-                                ? 'bg-amber-50/50 border border-amber-200/60'
+                                ? 'bg-amber-50/60 border border-amber-200/70 shadow-xs'
                                 : 'hover:bg-stone-50'
                             }`}
                           >
@@ -1074,6 +1130,28 @@ function DashboardContent() {
                                 <span className="font-mono">{article.timeAgo}</span>
                                 <span>•</span>
                                 <span className="text-stone-500">{article.domain}</span>
+                                {article.category && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      selectCategory(article.category as string);
+                                    }}
+                                    className={`px-1.5 py-0.2 rounded text-[8px] font-bold border transition-colors cursor-pointer ${
+                                      article.category === 'Technology'
+                                        ? 'bg-sky-50 text-sky-700 border-sky-200/70 hover:bg-sky-100'
+                                        : article.category === 'Politics'
+                                        ? 'bg-rose-50 text-rose-700 border-rose-200/70 hover:bg-rose-100'
+                                        : article.category === 'Finance'
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200/70 hover:bg-emerald-100'
+                                        : article.category === 'Science'
+                                        ? 'bg-purple-50 text-purple-700 border-purple-200/70 hover:bg-purple-100'
+                                        : 'bg-stone-100 text-stone-600 border-stone-200 hover:bg-stone-200'
+                                    }`}
+                                    title={`Filter by ${article.category}`}
+                                  >
+                                    {article.category}
+                                  </button>
+                                )}
                                 {article.countries.map((c) => (
                                   <button
                                     key={c.code}
@@ -1081,19 +1159,18 @@ function DashboardContent() {
                                       e.stopPropagation();
                                       selectCountry(c.code);
                                     }}
-                                    className={`inline-flex items-center gap-0.5 px-1 py-0.2 rounded text-[8.5px] font-bold border transition-colors cursor-pointer ${
+                                    className={`inline-flex items-center px-1.5 py-0.2 rounded text-[8.5px] font-mono font-bold border transition-colors cursor-pointer ${
                                       selectedCountryCode === c.code
                                         ? 'bg-amber-100 text-amber-900 border-amber-300'
                                         : 'bg-stone-100 text-stone-600 border-stone-200 hover:bg-amber-50 hover:text-amber-700'
                                     }`}
                                     title={`Filter map & feed by ${c.name}`}
                                   >
-                                    <span>{c.flag}</span>
-                                    <span>{c.code}</span>
+                                    {c.code}
                                   </button>
                                 ))}
                                 {article.isNew && (
-                                  <span className="text-[8px] font-extrabold uppercase px-1 py-0.2 bg-amber-500 text-white rounded">
+                                  <span className="text-[8px] font-extrabold uppercase px-1.5 py-0.2 bg-amber-500 text-white rounded-full animate-pulse shadow-xs">
                                     New
                                   </span>
                                 )}

@@ -11,6 +11,8 @@ export interface UseNewsMonitoringReturn {
   countryHighlights: CountryHighlight[];
   selectedCountryCode: string | null;
   selectCountry: (code: string | null) => void;
+  selectedCategory: string | null;
+  selectCategory: (category: string | null) => void;
   isLoading: boolean;
   isRateLimited: boolean;
   isStale: boolean;
@@ -30,6 +32,15 @@ export interface UseNewsMonitoringOptions {
 const DEFAULT_POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes sensible default
 const LS_NEWS_ARTICLES   = 'susi_news_cached_articles';
 const LS_NEWS_HIGHLIGHTS = 'susi_news_cached_highlights';
+export const NEW_ARTICLE_TTL_MS = 5 * 60 * 1000; // 5 minutes freshness window
+
+function normalizeHeadline(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 /**
  * Sorting comparator for real-time news display:
@@ -86,18 +97,18 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
   });
 
   const [selectedCountryCode, setSelectedCountryCode] = useState<string | null>(null);
-  const [isLoading, setIsLoading]         = useState<boolean>(true);
-  const [isRateLimited, setIsRateLimited] = useState<boolean>(false);
-  const [isStale, setIsStale]             = useState<boolean>(false);
-  const [lastUpdated, setLastUpdated]     = useState<string | null>(null);
-  const [newArticlesCount, setNewArticlesCount] = useState<number>(0);
-  const [source, setSource]               = useState<string>('none');
+  const [selectedCategory, setSelectedCategory]       = useState<string | null>(null);
+  const [isLoading, setIsLoading]                     = useState<boolean>(true);
+  const [isRateLimited, setIsRateLimited]             = useState<boolean>(false);
+  const [isStale, setIsStale]                         = useState<boolean>(false);
+  const [lastUpdated, setLastUpdated]                 = useState<string | null>(null);
+  const [source, setSource]                           = useState<string>('none');
 
   // Live-event markers hook — only new (post-startup) articles activate markers.
   const { activeMarkers, processNewArticles } = useNewsEventMarkers();
 
-  // Set of seen article IDs to identify genuinely newly arrived articles.
-  // Uses `article.id` (canonical URL) as the stable deduplication key.
+  // Track discovery timestamp per article to sustain isNew throughout freshness window
+  const discoveredAtMapRef = useRef<Map<string, number>>(new Map());
   const seenArticleIdsRef  = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
   const isFetchingRef      = useRef<boolean>(false);
@@ -143,47 +154,77 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
         }
 
         const isFirstLoad = seenArticleIdsRef.current.size === 0;
-        let freshlyDiscovered = 0;
+        const nowMs = Date.now();
+
+        // On first load, register all initial articles as seen with discovery timestamp 0 (not new)
+        if (isFirstLoad) {
+          incoming.forEach((a) => {
+            const stableId = a.id || a.url;
+            const norm = normalizeHeadline(a.title);
+            seenArticleIdsRef.current.add(stableId);
+            discoveredAtMapRef.current.set(stableId, 0);
+            if (norm) discoveredAtMapRef.current.set(norm, 0);
+          });
+        }
 
         const processed = incoming.map((art) => {
-          // Use article.id (canonical URL) as the stable dedup key.
           const stableId = art.id || art.url;
-          const isKnown  = seenArticleIdsRef.current.has(stableId);
-          const isNew    = !isFirstLoad && !isKnown;
-          if (isNew) freshlyDiscovered += 1;
+          const norm = normalizeHeadline(art.title);
+          const existingDisc =
+            discoveredAtMapRef.current.get(stableId) ??
+            (norm ? discoveredAtMapRef.current.get(norm) : undefined);
 
-          seenArticleIdsRef.current.add(stableId);
+          let isNew = false;
+          if (!isFirstLoad) {
+            if (existingDisc !== undefined) {
+              // Retain active new status as long as within the 5-minute freshness window
+              isNew = existingDisc > 0 && nowMs - existingDisc < NEW_ARTICLE_TTL_MS;
+            } else {
+              // Truly newly arrived article in this poll
+              discoveredAtMapRef.current.set(stableId, nowMs);
+              if (norm) discoveredAtMapRef.current.set(norm, nowMs);
+              seenArticleIdsRef.current.add(stableId);
+              isNew = true;
+            }
+          }
 
           return { ...art, id: stableId, isNew };
         });
 
-        // On first load, register all IDs without marking any as new.
-        if (isFirstLoad) {
-          incoming.forEach((a) => seenArticleIdsRef.current.add(a.id || a.url));
-        }
-
-        // Merge incoming articles with existing state so previous unexpired articles aren't lost,
-        // strictly delete anything older than 12 hours, and place newly arrived news at the top.
+        // Merge incoming articles with existing state, deduplicating strictly by ID and headline
         setArticles((prev) => {
           const map = new Map<string, GlobalNewsArticle>();
+          const titleSet = new Set<string>();
           const now = Date.now();
           const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 
           for (const item of processed) {
             const artTime = new Date(item.seendate).getTime() || item.ingestedAtMs || now;
+            const norm = normalizeHeadline(item.title);
             if (now - artTime < TWELVE_HOURS_MS) {
-              map.set(item.id, item);
+              if (!norm || !titleSet.has(norm)) {
+                map.set(item.id, item);
+                if (norm) titleSet.add(norm);
+              }
             }
           }
 
           for (const prevArt of prev) {
-            if (!map.has(prevArt.id)) {
+            const norm = normalizeHeadline(prevArt.title);
+            if (!map.has(prevArt.id) && (!norm || !titleSet.has(norm))) {
               const artTime = new Date(prevArt.seendate).getTime() || prevArt.ingestedAtMs || now;
               if (now - artTime < TWELVE_HOURS_MS) {
-                map.set(prevArt.id, { ...prevArt, isNew: false });
+                const disc =
+                  discoveredAtMapRef.current.get(prevArt.id) ??
+                  (norm ? discoveredAtMapRef.current.get(norm) : undefined) ??
+                  0;
+                const stillNew = disc > 0 && now - disc < NEW_ARTICLE_TTL_MS;
+                map.set(prevArt.id, { ...prevArt, isNew: stillNew });
+                if (norm) titleSet.add(norm);
               }
             }
           }
+
           const sorted = Array.from(map.values()).sort(sortArticlesNewestFirst);
 
           // Derive country highlights strictly from the current active news dataset.
@@ -207,13 +248,7 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
         setSource(data.meta?.source || 'unknown');
 
         // Notify the event-markers hook about the incoming batch.
-        // The hook internally distinguishes first-load (startup) articles from
-        // genuinely new post-startup articles.
         processNewArticles(processed);
-
-        if (freshlyDiscovered > 0) {
-          setNewArticlesCount((prev) => prev + freshlyDiscovered);
-        }
       }
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
@@ -297,28 +332,46 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
     setSelectedCountryCode((prev) => (prev === code ? null : code));
   }, []);
 
+  const selectCategory = useCallback((cat: string | null) => {
+    setSelectedCategory((prev) => (prev === cat ? null : cat));
+  }, []);
+
   const refreshNews = useCallback(async () => {
     await fetchNews(true);
   }, [fetchNews]);
+
+  // Dynamic count of genuinely new articles currently active in feed
+  const newArticlesCount = useMemo(() => {
+    return articles.filter((a) => a.isNew).length;
+  }, [articles]);
 
   const filteredArticles = useMemo(() => {
     const now = Date.now();
     const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
     // Exclude any articles older than 12 hours
-    const unexpired = articles.filter((a) => {
+    let list = articles.filter((a) => {
       const artTime = new Date(a.seendate).getTime() || a.ingestedAtMs || now;
       return now - artTime < TWELVE_HOURS_MS;
     });
 
-    const list = selectedCountryCode
-      ? unexpired.filter((art) => {
-          const target = selectedCountryCode.toUpperCase();
-          return art.countries.some((c) => c.code === target || c.code3 === target);
-        })
-      : unexpired;
+    if (selectedCountryCode) {
+      const target = selectedCountryCode.toUpperCase();
+      list = list.filter((art) =>
+        art.countries.some((c) => c.code === target || c.code3 === target)
+      );
+    }
+
+    if (selectedCategory) {
+      if (selectedCategory === 'NEW') {
+        list = list.filter((art) => art.isNew);
+      } else {
+        const catTarget = selectedCategory.toLowerCase();
+        list = list.filter((art) => (art.category || '').toLowerCase() === catTarget);
+      }
+    }
 
     return [...list].sort(sortArticlesNewestFirst);
-  }, [articles, selectedCountryCode]);
+  }, [articles, selectedCountryCode, selectedCategory]);
 
   return {
     articles,
@@ -326,6 +379,8 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
     countryHighlights,
     selectedCountryCode,
     selectCountry,
+    selectedCategory,
+    selectCategory,
     isLoading,
     isRateLimited,
     isStale,
