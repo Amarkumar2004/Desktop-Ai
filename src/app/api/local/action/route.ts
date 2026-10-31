@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import util from 'util';
 import { SecurityValidator } from '@/lib/security/securityValidator';
 
@@ -216,6 +216,68 @@ export async function POST(req: NextRequest) {
           error: msg,
           command,
         }, { status: 500 });
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 5. OPEN_APP (Windows Direct Desktop Launcher - 100% Script-Free)
+    // -------------------------------------------------------------
+    if (actionType === 'OPEN_APP') {
+      const rawApp = String(payload?.appName || payload?.target || 'chrome').trim().toLowerCase();
+
+      // Map friendly app names to official Windows launcher targets
+      let targetBinary = rawApp;
+      if (rawApp.includes('chrome') || rawApp.includes('browser')) {
+        targetBinary = 'chrome.exe';
+      } else if (rawApp.includes('notepad') || rawApp.includes('editor')) {
+        targetBinary = 'notepad.exe';
+      } else if (rawApp.includes('calc') || rawApp.includes('calculator')) {
+        targetBinary = 'calc.exe';
+      } else if (rawApp.includes('setting') || rawApp.includes('settings')) {
+        targetBinary = 'ms-settings:';
+      } else if (rawApp.includes('vs code') || rawApp.includes('vscode')) {
+        targetBinary = 'code';
+      } else if (rawApp.includes('explorer') || rawApp.includes('file') || rawApp.includes('folder')) {
+        targetBinary = 'explorer.exe';
+      }
+
+      // Security Check: Block dangerous system paths or malicious targets
+      const pathCheck = SecurityValidator.isDangerousPath(targetBinary);
+      if (pathCheck.dangerous) {
+        return NextResponse.json({
+          success: false,
+          error: pathCheck.reason,
+          code: 'SECURITY_VIOLATION',
+        }, { status: 403 });
+      }
+
+      // Launch directly via Windows Explorer Shell (No script, No black CMD window)
+      try {
+        const isWin = process.platform === 'win32';
+        if (isWin) {
+          const child = spawn('explorer.exe', [targetBinary], {
+            detached: true,
+            stdio: 'ignore',
+          });
+          child.unref();
+        } else {
+          const fallbackCmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
+          const child = spawn(fallbackCmd, [targetBinary], {
+            detached: true,
+            stdio: 'ignore',
+          });
+          child.unref();
+        }
+
+        return NextResponse.json({
+          success: true,
+          message: `Application "${rawApp}" launched successfully via Windows Desktop Launcher.`,
+          appName: rawApp,
+          targetBinary,
+        });
+      } catch (launchErr: unknown) {
+        const msg = launchErr instanceof Error ? launchErr.message : 'Failed to launch desktop application';
+        return NextResponse.json({ success: false, error: msg }, { status: 500 });
       }
     }
 

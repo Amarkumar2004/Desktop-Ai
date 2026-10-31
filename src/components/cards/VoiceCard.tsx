@@ -196,6 +196,27 @@ export default function OracleVoiceCard({
           window.history.pushState({}, '', currentUrl.toString());
         } catch {}
         propsRef.current.info('Tab Switched', `Opened ${targetTab.toUpperCase()} tab.`);
+      } else if (res.action?.type === 'OPEN_APP' && res.action.payload) {
+        const app = (res.action.payload.appName as string) || 'chrome';
+        fetch('/api/local/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            actionType: 'OPEN_APP',
+            payload: { appName: app },
+          }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.success) {
+              propsRef.current.success('App Launched', `Opened ${app.toUpperCase()} on Windows desktop.`);
+            } else {
+              propsRef.current.errorToast('Launch Failed', data.error || `Could not open ${app}`);
+            }
+          })
+          .catch((err) => {
+            propsRef.current.errorToast('Launch Error', err.message);
+          });
       }
     });
 

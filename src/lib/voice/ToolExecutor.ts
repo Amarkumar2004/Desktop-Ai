@@ -317,6 +317,36 @@ export class ToolExecutor implements IToolExecutor {
       }
     }
 
+    // -------------------------------------------------------------------------
+    // 8. OPEN_APP Action (Windows desktop applications: Chrome, Notepad, Calc)
+    // -------------------------------------------------------------------------
+    if (actionUpper === 'OPEN_APP') {
+      const appName = String(payload.appName || payload.target || 'chrome');
+      try {
+        if (typeof window !== 'undefined') {
+          const res = await fetch('/api/local/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              actionType: 'OPEN_APP',
+              payload: { appName },
+            }),
+          });
+          const data = await res.json();
+          return {
+            success: data.success,
+            message: data.message || `Launched ${appName}`,
+            result: data,
+          };
+        }
+      } catch (err: unknown) {
+        return {
+          success: false,
+          message: `Failed to launch ${appName}: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
+
     return {
       success: true,
       message: 'Action acknowledged.',

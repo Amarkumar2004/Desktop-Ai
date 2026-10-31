@@ -187,6 +187,22 @@ export async function POST(req: NextRequest) {
   } else if (lower.includes('telemetry') || lower.includes('system') || lower.includes('cpu')) {
     assignedAgent = 'LEX';
     action = { type: 'SYSTEM_INFO', payload: { cpu: 28, memory: 52, uptime: '2d 14h' } };
+  } else if (
+    (lower.includes('open') || lower.includes('kholo') || lower.includes('start') || lower.includes('launch') || lower.includes('chalao')) &&
+    (lower.includes('chrome') || lower.includes('browser') || lower.includes('notepad') || lower.includes('calc') || lower.includes('calculator') || lower.includes('setting') || lower.includes('vscode') || lower.includes('vs code') || lower.includes('explorer') || lower.includes('file manager'))
+  ) {
+    let targetApp = 'chrome';
+    if (lower.includes('notepad')) targetApp = 'notepad';
+    else if (lower.includes('calc')) targetApp = 'calculator';
+    else if (lower.includes('setting')) targetApp = 'settings';
+    else if (lower.includes('vs code') || lower.includes('vscode')) targetApp = 'code';
+    else if (lower.includes('explorer') || lower.includes('file manager')) targetApp = 'explorer';
+
+    assignedAgent = 'SUSI';
+    action = {
+      type: 'OPEN_APP',
+      payload: { appName: targetApp, target: targetApp },
+    };
   }
 
   const stream = new ReadableStream({
@@ -311,9 +327,14 @@ export async function POST(req: NextRequest) {
       }
 
       // Fallback message if providers are temporarily inactive
-      const fallbackText = isValidKey
+      let fallbackText = isValidKey
         ? `Haan ji, maine "${prompt}" sun liya hai. Cloud server par momentary load tha, kripya ek baar dobara boliye!`
         : `Haan ji, maine "${prompt}" sun liya hai. Gemini API key add karte hi ya Ollama start hote hi full AI active ho jayega!`;
+
+      if (action.type === 'OPEN_APP') {
+        const app = (action.payload?.appName || 'application').toUpperCase();
+        fallbackText = `Haan ji, ${app} open kar diya hai!`;
+      }
       sendEvent('token', { token: fallbackText });
       sendEvent('done', {
         fullReply: fallbackText,

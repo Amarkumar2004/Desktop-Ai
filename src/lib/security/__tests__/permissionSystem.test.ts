@@ -324,5 +324,11 @@ describe('Advanced PC Permission & Action Approval System', () => {
       expect(result.success).toBe(false);
       expect(result.message).toContain('Action cancelled');
     });
+
+    it('classifies OPEN_APP as LOW risk and launches without modal', () => {
+      const classification = ActionClassifier.classify('OPEN_APP', { appName: 'chrome' });
+      expect(classification.riskLevel).toBe('LOW');
+      expect(classification.requiresApproval).toBe(false);
+    });
   });
 });

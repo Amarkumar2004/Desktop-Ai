@@ -511,6 +511,22 @@ function DashboardContent() {
     } else if (lower === 'tasks') {
       reply = `${ts} [RESULT] There are ${tasks.length} tasks in the queue.`;
       handleNavClick('Tasks');
+    } else if (
+      lower.startsWith('open ') ||
+      ['chrome', 'notepad', 'calc', 'calculator', 'settings', 'vscode'].includes(lower)
+    ) {
+      const app = lower.replace(/^open\s+/, '').trim();
+      fetch('/api/local/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actionType: 'OPEN_APP', payload: { appName: app } }),
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.success) success('Launched', `Opened ${app.toUpperCase()} on Windows desktop.`);
+        })
+        .catch(() => {});
+      reply = `${ts} [APP] Launched "${app.toUpperCase()}" via Windows Desktop Launcher.`;
     } else if (lower.startsWith('task add ')) {
       const title = cmd.slice(9).trim();
       if (title) {

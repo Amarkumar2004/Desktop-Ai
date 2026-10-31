@@ -59,6 +59,7 @@ export class ActionClassifier {
       // LOW RISK — Automatic Execution
       // -------------------------------------------------------------
       case 'OPEN_URL':
+      case 'OPEN_APP':
       case 'NAVIGATE_TAB':
       case 'SYSTEM_INFO':
       case 'RUN_DIAGNOSTICS':
