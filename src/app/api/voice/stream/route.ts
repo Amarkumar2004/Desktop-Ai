@@ -221,86 +221,82 @@ export async function POST(req: NextRequest) {
       });
 
       // -----------------------------------------------------------------------
-      // STREAM DIRECTLY VIA GOOGLE GEMINI CLOUD INTERACTIONS API (gemini-3.8-flash)
+      // STREAM DIRECTLY VIA GOOGLE GEMINI API (gemini-3.5-flash & gemini-3.8-flash)
       // -----------------------------------------------------------------------
       const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || body.apiKey;
       const isValidKey = Boolean(geminiKey && geminiKey.trim().length > 5);
 
       if (isValidKey) {
-        console.log(`[Gemini API] Requesting gemini-3.8-flash via Interactions API for prompt: "${prompt.slice(0, 50)}..."`);
-        try {
-          const historyText = history.slice(-4).map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`).join('\n');
-          const fullPrompt = `System: You are SUSI, a warm, super-friendly conversational AI desktop assistant. Reply naturally in 1-2 spoken sentences (Hindi/English/Hinglish).\n${historyText ? `History:\n${historyText}\n` : ''}User Query: ${prompt}`;
+        console.log(`[Gemini API] Requesting Gemini for prompt: "${prompt.slice(0, 50)}..."`);
+        const candidateModels = ['gemini-3.5-flash', 'gemini-3.8-flash'];
+        const historyText = history
+          .slice(-4)
+          .map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`)
+          .join('\n');
+        const fullPrompt = `System: You are SUSI, a warm, super-friendly conversational AI desktop assistant. Reply naturally in 1-2 spoken sentences (Hindi/English/Hinglish). Do not use asterisks or markdown formatting. Keep it concise for voice.\n${
+          historyText ? `History:\n${historyText}\n` : ''
+        }User Query: ${prompt}`;
 
-          const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/interactions?key=${geminiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model: 'gemini-3.8-flash',
-              input: fullPrompt,
-              stream: true,
-            }),
-            signal: AbortSignal.timeout(30000),
-          });
-
-          console.log(`[Gemini API] Response status (gemini-3.8-flash): ${geminiRes.status}`);
-
-          if (geminiRes.ok && geminiRes.body) {
-            const reader = geminiRes.body.getReader();
-            const decoder = new TextDecoder();
-            let fullReply = '';
-            let sseBuffer = '';
-
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-
-              sseBuffer += decoder.decode(value, { stream: true });
-              const blocks = sseBuffer.split('\n\n');
-              sseBuffer = blocks.pop() || '';
-
-              for (const block of blocks) {
-                if (!block.trim()) continue;
-                const lines = block.split('\n');
-                let dataStr = '';
-
-                for (const line of lines) {
-                  const trimmed = line.trim();
-                  if (trimmed.startsWith('data: ')) {
-                    dataStr = trimmed.slice(6).trim();
-                  }
-                }
-
-                if (dataStr && dataStr !== '[DONE]') {
-                  try {
-                    const parsed = JSON.parse(dataStr);
-                    const tokenText = parsed.delta?.text;
-                    if (tokenText) {
-                      fullReply += tokenText;
-                      sendEvent('token', { token: tokenText });
-                    }
-                  } catch {}
-                }
+        for (const model of candidateModels) {
+          try {
+            const geminiRes = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [
+                    {
+                      parts: [{ text: fullPrompt }],
+                    },
+                  ],
+                }),
+                signal: AbortSignal.timeout(12000),
               }
-            }
+            );
 
-            if (fullReply.trim()) {
-              console.log(`[Gemini API] Stream completed successfully. Length: ${fullReply.length}`);
-              sendEvent('done', {
-                fullReply,
-                sourceProvider: 'gemini',
-                modelName: 'Google Gemini (gemini-3.8-flash)',
-                modeUsed: 'online',
-              });
-              closeController();
-              return;
+            console.log(`[Gemini API] Response status (${model}): ${geminiRes.status}`);
+
+            if (geminiRes.ok) {
+              const resData = await geminiRes.json();
+              const replyText =
+                resData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+
+              if (replyText) {
+                console.log(`[Gemini API] Received reply (${replyText.length} chars). Streaming to voice engine...`);
+                // Stream words as tokens for natural typing & speech synthesis
+                const words = replyText.split(' ');
+                for (let i = 0; i < words.length; i++) {
+                  const token = (i === 0 ? '' : ' ') + words[i];
+                  sendEvent('token', { token });
+                }
+
+                sendEvent('done', {
+                  fullReply: replyText,
+                  sourceProvider: 'gemini',
+                  modelName: `Google Gemini (${model})`,
+                  modeUsed: 'online',
+                });
+                closeController();
+                return;
+              }
+            } else {
+              const errText = await geminiRes.text();
+              console.warn(
+                `[Gemini API] ${model} returned status ${geminiRes.status}: ${sanitizeKey(
+                  errText,
+                  geminiKey
+                )}`
+              );
             }
-          } else {
-            const errText = await geminiRes.text();
-            console.warn(`[Gemini API] Interactions API returned status ${geminiRes.status}: ${sanitizeKey(errText, geminiKey)}`);
+          } catch (err: any) {
+            console.warn(
+              `[Gemini API] ${model} request failed: ${sanitizeKey(
+                err?.message || '',
+                geminiKey
+              )}`
+            );
           }
-        } catch (err: any) {
-          console.warn(`[Gemini API] Request failed: ${sanitizeKey(err?.message || '', geminiKey)}`);
         }
       }
 
