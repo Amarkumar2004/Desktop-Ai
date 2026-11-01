@@ -334,6 +334,12 @@ async function main() {
         );
       } catch (crudErr: any) {
         recordTest('CRUD Lifecycle', false, `CRUD operation failed: ${crudErr.message}`, crudErr);
+        if (crudErr.message?.includes('row-level security') || crudErr.code === '42501') {
+          console.log('\n\x1b[33m[RLS NOTICE]\x1b[0m Row Level Security successfully protected the database from unauthenticated writes.');
+          console.log('To permit desktop local mode (unassigned tasks where user_id IS NULL), run this quick 10-line SQL in your Supabase SQL Editor:');
+          console.log('👉 https://supabase.com/dashboard/project/tvvmhrjdjpjucqdhkert/sql/new');
+          console.log('File: supabase/migrations/20261101144000_allow_anon_desktop_tasks.sql\n');
+        }
       }
     }
   }
