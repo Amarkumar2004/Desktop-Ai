@@ -2807,6 +2807,7 @@ dependencies = [
  "sysinfo",
  "tauri",
  "tauri-build",
+ "winreg",
 ]
 
 [[package]]

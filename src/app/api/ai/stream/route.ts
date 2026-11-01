@@ -40,6 +40,27 @@ const DEFAULT_CHAT_SYSTEM_PROMPT = `You are SUSI AI, an advanced, intelligent, a
 Respond clearly, concisely, and helpfully. Adapt to user language (English, Hindi, Hinglish, etc.).`;
 
 /**
+ * SSRF Guard: Validates custom provider base URLs against dangerous cloud metadata or spoofed schemes.
+ */
+function validateCustomBaseUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('Disallowed protocol');
+    }
+    const host = parsed.hostname.toLowerCase();
+    // Block AWS, GCP, Azure cloud metadata endpoints
+    if (host === '169.254.169.254' || host === 'metadata.google.internal' || host === 'instance-data') {
+      throw new Error('Blocked access to cloud metadata endpoint');
+    }
+    return parsed.toString().replace(/\/+$/, '');
+  } catch (err) {
+    console.warn('[SSRF Guard] Blocked dangerous baseUrl:', rawUrl, (err as Error).message);
+    return 'http://localhost:11434/v1'; // Safe local Ollama fallback
+  }
+}
+
+/**
  * Resolves effective provider credentials from user request or server environment.
  */
 function resolveCredentials(
@@ -52,7 +73,7 @@ function resolveCredentials(
     case 'freellm':
       return {
         apiKey: (user.apiKey || process.env.FREELLM_API_KEY || 'free_demo_key').trim(),
-        baseUrl: (user.baseUrl || process.env.FREELLM_BASE_URL || 'https://api.freellmmap.com/v1').replace(/\/+$/, ''),
+        baseUrl: validateCustomBaseUrl(user.baseUrl || process.env.FREELLM_BASE_URL || 'https://api.freellmmap.com/v1'),
       };
     case 'google_gemini':
       return {
@@ -72,7 +93,7 @@ function resolveCredentials(
     case 'openai':
       return {
         apiKey: (user.apiKey || process.env.OPENAI_API_KEY || '').trim(),
-        baseUrl: (user.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, ''),
+        baseUrl: validateCustomBaseUrl(user.baseUrl || 'https://api.openai.com/v1'),
       };
     case 'openrouter':
       return {
@@ -83,7 +104,7 @@ function resolveCredentials(
     default:
       return {
         apiKey: (user.apiKey || '').trim(),
-        baseUrl: (user.baseUrl || 'http://localhost:11434/v1').replace(/\/+$/, ''),
+        baseUrl: validateCustomBaseUrl(user.baseUrl || 'http://localhost:11434/v1'),
       };
   }
 }

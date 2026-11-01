@@ -472,10 +472,9 @@ export class VoiceEngine {
             const actionsList = Array.isArray(eventData.actions) && eventData.actions.length > 0
               ? eventData.actions
               : eventData.action ? [eventData.action] : [];
-            for (const act of actionsList) {
-              if (act && act.type && act.type !== 'CHAT_REPLY') {
-                this.taskOrchestrator.planAndDispatch(trimmed, act);
-              }
+            const actionable = actionsList.filter((act: any) => act && act.type && act.type !== 'CHAT_REPLY');
+            if (actionable.length > 0) {
+              this.taskOrchestrator.planAndDispatch(trimmed, actionable);
             }
           } else if (eventType === 'token' && eventData?.token) {
             if (!firstTokenRecorded) {

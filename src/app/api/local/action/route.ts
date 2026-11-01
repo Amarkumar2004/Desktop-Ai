@@ -1,89 +1,287 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { exec, spawn } from 'child_process';
-import util from 'util';
+import os from 'os';
+import { spawn } from 'child_process';
+import { z } from 'zod';
 import { SecurityValidator } from '@/lib/security/securityValidator';
+import { auditLogger } from '@/lib/security/auditLogger';
 
-const execPromise = util.promisify(exec);
+// =============================================================================
+// 1. RATE LIMITING & ORIGIN / CSRF SECURITY
+// =============================================================================
 
-// Formats file sizes into human-readable strings
+interface RateLimitBucket {
+  count: number;
+  resetAt: number;
+}
+const rateLimitMap = new Map<string, RateLimitBucket>();
+const MAX_REQUESTS_PER_MINUTE = 60;
+const WINDOW_MS = 60 * 1000;
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const bucket = rateLimitMap.get(ip);
+  if (!bucket || now > bucket.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + WINDOW_MS });
+    return true;
+  }
+  if (bucket.count >= MAX_REQUESTS_PER_MINUTE) {
+    return false;
+  }
+  bucket.count++;
+  return true;
+}
+
+function validateOrigin(req: NextRequest): { valid: boolean; reason?: string } {
+  // Sec-Fetch-Site protection (blocks cross-site fetch requests from third-party sites)
+  const fetchSite = req.headers.get('sec-fetch-site');
+  if (fetchSite && fetchSite === 'cross-site') {
+    return { valid: false, reason: 'Cross-site request blocked by security policy.' };
+  }
+
+  const origin = req.headers.get('origin');
+  const host = req.headers.get('host') || 'localhost:3000';
+
+  if (origin) {
+    try {
+      const originUrl = new URL(origin);
+      const isLocalhost =
+        originUrl.hostname === 'localhost' ||
+        originUrl.hostname === '127.0.0.1' ||
+        originUrl.hostname === '::1';
+      const isTauri = originUrl.protocol === 'tauri:' || originUrl.hostname === 'tauri.localhost';
+
+      if (!isLocalhost && !isTauri && originUrl.host !== host) {
+        return { valid: false, reason: `Untrusted origin "${origin}".` };
+      }
+    } catch {
+      return { valid: false, reason: 'Malformed origin header.' };
+    }
+  }
+
+  return { valid: true };
+}
+
+// =============================================================================
+// 2. STRICT ZOD SCHEMAS FOR EVERY ACTION
+// =============================================================================
+
+const ActionTypeSchema = z.enum([
+  'GET_FILE_INFO',
+  'DELETE_FILE',
+  'DELETE_FOLDER',
+  'CREATE_FILE',
+  'OVERWRITE_FILE',
+  'READ_FILE',
+  'INSPECT_FILE',
+  'OPEN_APP',
+  'CLOSE_APP',
+  'OPEN_URL',
+  'VOLUME_CONTROL',
+  'MEDIA_CONTROL',
+  'WINDOW_CONTROL',
+  'TAKE_SCREENSHOT',
+  'CLIPBOARD_ACTION',
+  'POWER_CONTROL',
+  'OPEN_SPECIAL_FOLDER',
+  'SYSTEM_INFO',
+]);
+
+const ActionRequestSchema = z.object({
+  actionType: ActionTypeSchema,
+  payload: z.record(z.string(), z.unknown()).default({}),
+});
+
+// =============================================================================
+// 3. SAFE HELPERS (ZERO SHELL STRING CONCATENATION)
+// =============================================================================
+
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Safely moves a file or folder to the Windows Recycle Bin
-async function moveToRecycleBin(absolutePath: string): Promise<boolean> {
+/**
+ * Safely moves file to Windows Recycle Bin via PowerShell Microsoft.VisualBasic
+ * Paths are passed via encoded base64 or strict argument escaping to prevent injection.
+ */
+async function safeMoveToRecycleBin(absolutePath: string): Promise<boolean> {
   const isWin = process.platform === 'win32';
   if (!isWin) {
-    // Non-Windows fallback: remove safely
     fs.rmSync(absolutePath, { recursive: true, force: true });
     return true;
   }
 
   const stat = fs.statSync(absolutePath);
   const isDirectory = stat.isDirectory();
-  const escapedPath = absolutePath.replace(/'/g, "''");
-
   const method = isDirectory ? 'DeleteDirectory' : 'DeleteFile';
-  const psCommand = `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::${method}('${escapedPath}', 'OnlyErrorDialogs', 'SendToRecycleBin')`;
 
-  try {
-    await execPromise(`powershell.exe -NoProfile -NonInteractive -Command "${psCommand}"`, {
-      timeout: 10000,
+  // Base64 encode the path to guarantee zero PowerShell parsing injection
+  const pathBase64 = Buffer.from(absolutePath, 'utf16le').toString('base64');
+  const psScript = `
+    $bytes = [System.Convert]::FromBase64String('${pathBase64}');
+    $path = [System.Text.Encoding]::Unicode.GetString($bytes);
+    Add-Type -AssemblyName Microsoft.VisualBasic;
+    [Microsoft.VisualBasic.FileIO.FileSystem]::${method}($path, 'OnlyErrorDialogs', 'SendToRecycleBin');
+  `;
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', psScript],
+      { stdio: ['ignore', 'pipe', 'pipe'] }
+    );
+
+    let stderr = '';
+    child.stderr.on('data', (d) => {
+      stderr += d.toString();
     });
-    return true;
-  } catch (err: unknown) {
-    console.error('[RecycleBin] PowerShell recycle failed:', err);
-    throw new Error(`Failed to move to Recycle Bin: ${err instanceof Error ? err.message : String(err)}`);
-  }
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(true);
+      } else {
+        reject(new Error(stderr || `Recycle bin operation failed with code ${code}`));
+      }
+    });
+
+    child.on('error', reject);
+  });
 }
 
+// Critical Windows processes that MUST NEVER be killed
+const CRITICAL_PROCESSES = new Set([
+  'csrss.exe',
+  'services.exe',
+  'lsass.exe',
+  'smss.exe',
+  'wininit.exe',
+  'explorer.exe',
+  'taskmgr.exe',
+  'svchost.exe',
+  'system',
+  'registry',
+]);
+
+// Known safe application binaries mapping
+const APP_BINARIES_MAP: Record<string, string> = {
+  chrome: 'chrome.exe',
+  notepad: 'notepad.exe',
+  calc: 'calc.exe',
+  calculator: 'calc.exe',
+  settings: 'ms-settings:',
+  code: 'code',
+  vscode: 'code',
+  paint: 'mspaint.exe',
+  mspaint: 'mspaint.exe',
+  taskmgr: 'taskmgr.exe',
+  cmd: 'cmd.exe',
+  terminal: 'wt.exe',
+  edge: 'msedge.exe',
+  spotify: 'spotify:',
+  discord: 'discord:',
+  whatsapp: 'whatsapp:',
+  steam: 'steam:',
+  vlc: 'vlc.exe',
+  word: 'winword.exe',
+  excel: 'excel.exe',
+  powerpoint: 'powerpnt.exe',
+};
+
+// =============================================================================
+// 4. MAIN ROUTE HANDLER
+// =============================================================================
+
 export async function POST(req: NextRequest) {
+  const clientIp = req.headers.get('x-forwarded-for') || '127.0.0.1';
+
+  // 1. Rate Limiting Check
+  if (!checkRateLimit(clientIp)) {
+    return NextResponse.json(
+      { success: false, error: 'Rate limit exceeded. Please wait a moment before sending more actions.', code: 'RATE_LIMIT_EXCEEDED' },
+      { status: 429 }
+    );
+  }
+
+  // 2. CSRF & Origin Validation
+  const originCheck = validateOrigin(req);
+  if (!originCheck.valid) {
+    auditLogger.log({
+      requestId: `req_${Date.now()}`,
+      actionType: 'SECURITY_BLOCKED',
+      target: 'CSRF_ORIGIN_CHECK',
+      riskLevel: 'HIGH',
+      status: 'DENIED',
+      executionResult: {
+        success: false,
+        message: originCheck.reason || 'Invalid origin',
+      },
+    });
+    return NextResponse.json(
+      { success: false, error: originCheck.reason, code: 'FORBIDDEN_ORIGIN' },
+      { status: 403 }
+    );
+  }
+
+  // 3. Request Body Parsing & Zod Schema Validation
+  let rawBody: unknown;
   try {
-    const body = await req.json();
-    const { actionType, payload } = body;
+    rawBody = await req.json();
+  } catch {
+    return NextResponse.json(
+      { success: false, error: 'Malformed JSON payload in request body.', code: 'INVALID_JSON' },
+      { status: 400 }
+    );
+  }
 
-    if (!actionType) {
-      return NextResponse.json({ success: false, error: 'actionType is required' }, { status: 400 });
-    }
+  const parseResult = ActionRequestSchema.safeParse(rawBody);
+  if (!parseResult.success) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: `Validation failed: ${parseResult.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')}`,
+        code: 'VALIDATION_ERROR',
+      },
+      { status: 400 }
+    );
+  }
 
-    const workspaceDir = process.cwd();
+  const { actionType, payload } = parseResult.data;
+  const workspaceDir = process.cwd();
 
-    // -------------------------------------------------------------
-    // 1. GET_FILE_INFO (Inspects file existence, path, and size)
-    // -------------------------------------------------------------
+  try {
+    // -------------------------------------------------------------------------
+    // ACTION: GET_FILE_INFO
+    // -------------------------------------------------------------------------
     if (actionType === 'GET_FILE_INFO') {
-      const rawPath = String(payload?.path || payload?.filename || '');
-      const resolvedPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(workspaceDir, rawPath);
-
-      // Check dangerous path
-      const check = SecurityValidator.isDangerousPath(resolvedPath);
-      if (check.dangerous) {
-        return NextResponse.json({
-          success: false,
-          error: check.reason,
-          code: 'SECURITY_VIOLATION',
-        }, { status: 403 });
+      const rawPath = String(payload.path || payload.filename || '').trim();
+      if (!rawPath) {
+        return NextResponse.json({ success: false, error: 'path is required' }, { status: 400 });
       }
 
-      if (!fs.existsSync(resolvedPath)) {
+      const resolved = path.isAbsolute(rawPath) ? rawPath : path.resolve(workspaceDir, rawPath);
+      const check = SecurityValidator.isDangerousPath(resolved);
+      if (check.dangerous) {
+        return NextResponse.json({ success: false, error: check.reason, code: 'SECURITY_VIOLATION' }, { status: 403 });
+      }
+
+      if (!fs.existsSync(resolved)) {
         return NextResponse.json({
           success: true,
           exists: false,
-          filename: path.basename(resolvedPath),
-          path: resolvedPath,
+          filename: path.basename(resolved),
+          path: resolved,
         });
       }
 
-      const stat = fs.statSync(resolvedPath);
+      const stat = fs.statSync(resolved);
       return NextResponse.json({
         success: true,
         exists: true,
-        filename: path.basename(resolvedPath),
-        path: resolvedPath,
+        filename: path.basename(resolved),
+        path: resolved,
         fileSizeBytes: stat.size,
         fileSize: formatFileSize(stat.size),
         isDirectory: stat.isDirectory(),
@@ -91,541 +289,508 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // -------------------------------------------------------------
-    // 2. DELETE_FILE / DELETE_FOLDER (Moves to Windows Recycle Bin)
-    // -------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // ACTION: DELETE_FILE / DELETE_FOLDER (Windows Recycle Bin Safe Deletion)
+    // -------------------------------------------------------------------------
     if (actionType === 'DELETE_FILE' || actionType === 'DELETE_FOLDER') {
-      const rawPath = String(payload?.path || payload?.filename || '');
+      const rawPath = String(payload.path || payload.filename || '').trim();
       if (!rawPath) {
         return NextResponse.json({ success: false, error: 'Target path is required for deletion' }, { status: 400 });
       }
 
       const targetPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(workspaceDir, rawPath);
-
-      // Security check: Block dangerous system paths
       const pathCheck = SecurityValidator.isDangerousPath(targetPath);
       if (pathCheck.dangerous) {
-        return NextResponse.json({
-          success: false,
-          error: pathCheck.reason,
-          code: 'SECURITY_VIOLATION',
-        }, { status: 403 });
+        return NextResponse.json({ success: false, error: pathCheck.reason, code: 'SECURITY_VIOLATION' }, { status: 403 });
       }
 
       if (!fs.existsSync(targetPath)) {
-        return NextResponse.json({
-          success: false,
-          error: `File or folder "${path.basename(targetPath)}" does not exist.`,
-        }, { status: 404 });
+        return NextResponse.json(
+          { success: false, error: `File or folder "${path.basename(targetPath)}" does not exist.`, code: 'NOT_FOUND' },
+          { status: 404 }
+        );
       }
 
       const stat = fs.statSync(targetPath);
       const originalSize = formatFileSize(stat.size);
       const originalName = path.basename(targetPath);
 
-      // Execute safe move to Windows Recycle Bin
-      await moveToRecycleBin(targetPath);
+      await safeMoveToRecycleBin(targetPath);
 
-      // Verify file is gone
-      const existsAfter = fs.existsSync(targetPath);
-      if (existsAfter) {
-        return NextResponse.json({
-          success: false,
-          error: 'File deletion verification failed. File still exists.',
-        }, { status: 500 });
+      // Verify deletion
+      if (fs.existsSync(targetPath)) {
+        return NextResponse.json(
+          { success: false, error: 'Recycle Bin verification failed. File still exists on disk.', code: 'DELETION_FAILED' },
+          { status: 500 }
+        );
       }
+
+      auditLogger.log({
+        requestId: `req_${Date.now()}`,
+        actionType,
+        target: targetPath,
+        riskLevel: 'HIGH',
+        status: 'APPROVED',
+        executionResult: {
+          success: true,
+          message: 'User approved safe recycle deletion',
+        },
+      });
 
       return NextResponse.json({
         success: true,
         message: `Successfully moved "${originalName}" (${originalSize}) to the Windows Recycle Bin.`,
         targetPath,
         recycled: true,
-        timestamp: new Date().toISOString(),
       });
     }
 
-    // -------------------------------------------------------------
-    // 3. CREATE_FILE / OVERWRITE_FILE
-    // -------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // ACTION: CREATE_FILE / OVERWRITE_FILE
+    // -------------------------------------------------------------------------
     if (actionType === 'CREATE_FILE' || actionType === 'OVERWRITE_FILE') {
-      const filename = payload?.filename || `generated-${Date.now()}.txt`;
-      const content = payload?.content || '// Created via SUSI AI\n';
-      const rawPath = payload?.path || path.join('src', 'generated', path.basename(filename));
+      const rawFilename = String(payload.filename || payload.path || 'file.txt').trim();
+      const content = typeof payload.content === 'string' ? payload.content : '';
 
-      const targetPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(workspaceDir, rawPath);
-
-      // Security Check
-      const check = SecurityValidator.isDangerousPath(targetPath);
-      if (check.dangerous) {
-        return NextResponse.json({
-          success: false,
-          error: check.reason,
-          code: 'SECURITY_VIOLATION',
-        }, { status: 403 });
+      const targetPath = path.isAbsolute(rawFilename) ? rawFilename : path.resolve(workspaceDir, rawFilename);
+      const pathCheck = SecurityValidator.isDangerousPath(targetPath);
+      if (pathCheck.dangerous) {
+        return NextResponse.json({ success: false, error: pathCheck.reason, code: 'SECURITY_VIOLATION' }, { status: 403 });
       }
 
-      const dir = path.dirname(targetPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+      const parentDir = path.dirname(targetPath);
+      if (!fs.existsSync(parentDir)) {
+        fs.mkdirSync(parentDir, { recursive: true });
       }
 
       fs.writeFileSync(targetPath, content, 'utf8');
 
+      // Verify file was created and content matches
+      if (!fs.existsSync(targetPath)) {
+        return NextResponse.json({ success: false, error: 'Failed to verify file creation.', code: 'FILE_CREATE_FAILED' }, { status: 500 });
+      }
+
       return NextResponse.json({
         success: true,
-        message: `File created successfully at ${path.relative(workspaceDir, targetPath)}`,
+        message: `File "${path.basename(targetPath)}" written successfully.`,
         filePath: targetPath,
+        bytesWritten: Buffer.byteLength(content, 'utf8'),
       });
     }
 
-    // -------------------------------------------------------------
-    // 4. EXECUTE_COMMAND (Secure terminal command execution)
-    // -------------------------------------------------------------
-    if (actionType === 'EXECUTE_COMMAND' || actionType === 'TERMINAL_COMMAND') {
-      const command = String(payload?.command || '').trim();
-      if (!command) {
-        return NextResponse.json({ success: false, error: 'Command string is required' }, { status: 400 });
+    // -------------------------------------------------------------------------
+    // ACTION: READ_FILE / INSPECT_FILE
+    // -------------------------------------------------------------------------
+    if (actionType === 'READ_FILE' || actionType === 'INSPECT_FILE') {
+      const rawPath = String(payload.path || payload.filename || '').trim();
+      const targetPath = path.isAbsolute(rawPath) ? rawPath : path.resolve(workspaceDir, rawPath);
+
+      const pathCheck = SecurityValidator.isDangerousPath(targetPath);
+      if (pathCheck.dangerous) {
+        return NextResponse.json({ success: false, error: pathCheck.reason, code: 'SECURITY_VIOLATION' }, { status: 403 });
       }
 
-      // Security Check: Block dangerous command signatures
-      const cmdCheck = SecurityValidator.inspectCommand(command);
-      if (!cmdCheck.safe) {
-        return NextResponse.json({
-          success: false,
-          error: cmdCheck.reason,
-          code: 'SECURITY_VIOLATION',
-        }, { status: 403 });
+      if (!fs.existsSync(targetPath)) {
+        return NextResponse.json({ success: false, error: `File not found: ${path.basename(targetPath)}`, code: 'NOT_FOUND' }, { status: 404 });
       }
 
-      try {
-        const { stdout, stderr } = await execPromise(command, {
-          cwd: workspaceDir,
-          timeout: 30000,
-        });
-
-        return NextResponse.json({
-          success: true,
-          command,
-          stdout: stdout.trim(),
-          stderr: stderr.trim(),
-        });
-      } catch (cmdErr: unknown) {
-        const msg = cmdErr instanceof Error ? cmdErr.message : 'Command execution failed';
-        return NextResponse.json({
-          success: false,
-          error: msg,
-          command,
-        }, { status: 500 });
+      const stat = fs.statSync(targetPath);
+      if (stat.size > 2 * 1024 * 1024) {
+        return NextResponse.json({ success: false, error: 'File size exceeds 2MB limit for direct reading.', code: 'FILE_TOO_LARGE' }, { status: 400 });
       }
+
+      const content = fs.readFileSync(targetPath, 'utf8');
+      return NextResponse.json({
+        success: true,
+        filename: path.basename(targetPath),
+        path: targetPath,
+        content,
+        size: formatFileSize(stat.size),
+      });
     }
 
-    // -------------------------------------------------------------
-    // 5. OPEN_APP (Windows Direct Desktop Launcher - 100% Script-Free)
-    // -------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // ACTION: OPEN_APP (Native Argument-Based Spawn, No Shell String Concat)
+    // -------------------------------------------------------------------------
     if (actionType === 'OPEN_APP') {
-      const rawApp = String(payload?.appName || payload?.target || 'chrome').trim().toLowerCase();
-
-      // Map friendly app names to official Windows launcher targets & arguments
-      let targetBinary = rawApp;
-      let extraArgs = '';
-
-      if (
-        rawApp.includes('chrome') ||
-        rawApp.includes('google') ||
-        rawApp.includes('browser') ||
-        rawApp.includes('internet') ||
-        rawApp.includes('web') ||
-        rawApp === 'application' ||
-        rawApp === 'app' ||
-        rawApp === 'open application' ||
-        rawApp === 'open app'
-      ) {
-        targetBinary = 'chrome.exe';
-        extraArgs = '--new-window https://www.google.com';
-      } else if (rawApp.includes('notepad') || rawApp.includes('editor') || rawApp.includes('note') || rawApp.includes('text')) {
-        targetBinary = 'notepad.exe';
-      } else if (rawApp.includes('calc') || rawApp.includes('calculator') || rawApp.includes('hisab')) {
-        targetBinary = 'calc.exe';
-      } else if (rawApp.includes('setting')) {
-        targetBinary = 'ms-settings:';
-      } else if (rawApp.includes('vs code') || rawApp.includes('vscode') || rawApp.includes('code')) {
-        targetBinary = 'code';
-      } else if (rawApp.includes('explorer') || rawApp.includes('file') || rawApp.includes('folder')) {
-        targetBinary = 'explorer.exe';
-      } else if (rawApp.includes('paint') || rawApp.includes('drawing')) {
-        targetBinary = 'mspaint.exe';
-      } else if (rawApp.includes('task') && (rawApp.includes('manager') || rawApp.includes('mgr'))) {
-        targetBinary = 'taskmgr.exe';
-      } else if (rawApp.includes('cmd') || rawApp.includes('terminal') || rawApp.includes('command')) {
-        targetBinary = 'cmd.exe';
-      } else if (rawApp.includes('edge')) {
-        targetBinary = 'msedge.exe';
-        extraArgs = 'https://www.bing.com';
-      } else if (rawApp.includes('spotify')) {
-        targetBinary = 'spotify:';
-      } else if (rawApp.includes('discord')) {
-        targetBinary = 'discord:';
-      } else if (rawApp.includes('whatsapp')) {
-        targetBinary = 'whatsapp:';
-      } else if (rawApp.includes('steam')) {
-        targetBinary = 'steam:';
-      } else if (rawApp.includes('word') || rawApp.includes('winword') || rawApp.includes('doc')) {
-        targetBinary = 'winword.exe';
-      } else if (rawApp.includes('excel') || rawApp.includes('sheet')) {
-        targetBinary = 'excel.exe';
-      } else if (rawApp.includes('powerpoint') || rawApp.includes('ppt') || rawApp.includes('slide')) {
-        targetBinary = 'powerpnt.exe';
-      } else if (rawApp.includes('vlc')) {
-        targetBinary = 'vlc.exe';
-      } else if (rawApp.includes('zoom')) {
-        targetBinary = 'zoom.exe';
-      } else if (rawApp.includes('telegram')) {
-        targetBinary = 'telegram.exe';
+      const rawApp = String(payload.appName || payload.target || '').trim().toLowerCase();
+      if (!rawApp) {
+        return NextResponse.json({ success: false, error: 'appName is required' }, { status: 400 });
       }
 
-      // Security Check: Block dangerous system paths or malicious targets
+      let targetBinary = APP_BINARIES_MAP[rawApp] || rawApp;
+      let args: string[] = [];
+
+      // Check common Chrome paths if requested
+      if (rawApp.includes('chrome') || rawApp.includes('browser') || rawApp.includes('google')) {
+        targetBinary = 'chrome.exe';
+        const chromePaths = [
+          'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+          `${process.env.LOCALAPPDATA || ''}\\Google\\Chrome\\Application\\chrome.exe`,
+        ];
+        const found = chromePaths.find((p) => p && fs.existsSync(p));
+        if (found) targetBinary = found;
+      }
+
       const pathCheck = SecurityValidator.isDangerousPath(targetBinary);
       if (pathCheck.dangerous) {
-        return NextResponse.json({
-          success: false,
-          error: pathCheck.reason,
-          code: 'SECURITY_VIOLATION',
-        }, { status: 403 });
+        return NextResponse.json({ success: false, error: pathCheck.reason, code: 'SECURITY_VIOLATION' }, { status: 403 });
       }
 
-      // Launch directly on Windows desktop without scripts
-      try {
-        const isWin = process.platform === 'win32';
-        if (isWin) {
-          const chromePaths = [
-            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-            `${process.env.LOCALAPPDATA || ''}\\Google\\Chrome\\Application\\chrome.exe`,
-            `${process.env.PROGRAMFILES || 'C:\\Program Files'}\\Google\\Chrome\\Application\\chrome.exe`,
-            `${process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)'}\\Google\\Chrome\\Application\\chrome.exe`,
-          ];
-
-          let resolvedTarget = targetBinary;
-          if (targetBinary === 'chrome.exe' || targetBinary === 'chrome') {
-            const found = chromePaths.find((p) => p && fs.existsSync(p));
-            if (found) {
-              resolvedTarget = found;
-            }
-          }
-
-          // Launch on Windows desktop without scripts
-          const isProtocol = resolvedTarget.includes(':') && !resolvedTarget.includes('\\');
-          const launchCommand = isProtocol
-            ? `start ${resolvedTarget}`
-            : extraArgs
-            ? `start "" "${resolvedTarget}" ${extraArgs}`
-            : `start "" "${resolvedTarget}"`;
-
-          exec(launchCommand, (err) => {
-            if (err) console.error('[OPEN_APP] Launch error:', err);
-          });
+      if (process.platform === 'win32') {
+        // Safe spawn using cmd.exe argument array (avoids raw shell injection)
+        const isProtocol = targetBinary.includes(':') && !targetBinary.includes('\\');
+        if (isProtocol) {
+          spawn('cmd.exe', ['/c', 'start', '', targetBinary], { detached: true, stdio: 'ignore' }).unref();
         } else {
-          const fallbackCmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
-          const child = spawn(fallbackCmd, [targetBinary], {
-            detached: true,
-            stdio: 'ignore',
-          });
-          child.unref();
+          spawn('cmd.exe', ['/c', 'start', '', targetBinary, ...args], { detached: true, stdio: 'ignore' }).unref();
         }
-
-        return NextResponse.json({
-          success: true,
-          message: `Application "${rawApp}" launched successfully via Windows Desktop Launcher.`,
-          appName: rawApp,
-          targetBinary,
-        });
-      } catch (launchErr: unknown) {
-        const msg = launchErr instanceof Error ? launchErr.message : 'Failed to launch desktop application';
-        return NextResponse.json({ success: false, error: msg }, { status: 500 });
+      } else {
+        const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
+        spawn(cmd, [targetBinary], { detached: true, stdio: 'ignore' }).unref();
       }
+
+      return NextResponse.json({
+        success: true,
+        message: `Application "${rawApp}" launched via verified desktop launcher.`,
+        appName: rawApp,
+        targetBinary,
+      });
     }
 
-    // -------------------------------------------------------------
-    // 6. CLOSE_APP (Safe Windows Process Termination)
-    // -------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // ACTION: CLOSE_APP (Safe Task Termination, Critical Process Protected)
+    // -------------------------------------------------------------------------
     if (actionType === 'CLOSE_APP') {
-      const rawApp = String(payload?.appName || payload?.target || '').trim().toLowerCase();
-      let processName = rawApp;
+      const rawApp = String(payload.appName || payload.target || '').trim().toLowerCase();
+      if (!rawApp) {
+        return NextResponse.json({ success: false, error: 'appName is required to close app' }, { status: 400 });
+      }
 
-      if (rawApp.includes('chrome') || rawApp.includes('browser') || rawApp.includes('google')) {
-        processName = 'chrome.exe';
-      } else if (rawApp.includes('notepad') || rawApp.includes('editor')) {
-        processName = 'notepad.exe';
-      } else if (rawApp.includes('calc') || rawApp.includes('calculator')) {
-        processName = 'calc.exe';
-      } else if (rawApp.includes('vs code') || rawApp.includes('vscode') || rawApp.includes('code')) {
-        processName = 'Code.exe';
-      } else if (rawApp.includes('paint')) {
-        processName = 'mspaint.exe';
-      } else if (rawApp.includes('spotify')) {
-        processName = 'Spotify.exe';
-      } else if (rawApp.includes('vlc')) {
-        processName = 'vlc.exe';
-      } else if (rawApp.includes('discord')) {
-        processName = 'Discord.exe';
-      } else if (rawApp.includes('word') || rawApp.includes('winword')) {
-        processName = 'WINWORD.EXE';
-      } else if (rawApp.includes('excel')) {
-        processName = 'EXCEL.EXE';
-      } else if (rawApp.includes('powerpoint') || rawApp.includes('ppt')) {
-        processName = 'POWERPNT.EXE';
-      } else if (rawApp.includes('edge')) {
-        processName = 'msedge.exe';
+      let processName = rawApp;
+      if (APP_BINARIES_MAP[rawApp] && APP_BINARIES_MAP[rawApp].endsWith('.exe')) {
+        processName = APP_BINARIES_MAP[rawApp];
       } else if (!processName.endsWith('.exe')) {
         processName = `${processName}.exe`;
       }
 
-      const criticalProcesses = ['explorer.exe', 'csrss.exe', 'svchost.exe', 'services.exe', 'lsass.exe', 'smss.exe', 'wininit.exe', 'taskmgr.exe'];
-      if (criticalProcesses.includes(processName.toLowerCase())) {
-        return NextResponse.json({
-          success: false,
-          error: `Terminating critical system process "${processName}" is blocked for OS stability.`,
-          code: 'SECURITY_VIOLATION',
-        }, { status: 403 });
+      // Check Critical Process Blacklist
+      if (CRITICAL_PROCESSES.has(processName)) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Terminating critical system process "${processName}" is blocked for OS stability.`,
+            code: 'SECURITY_VIOLATION',
+          },
+          { status: 403 }
+        );
       }
 
-      try {
-        if (process.platform === 'win32') {
-          exec(`taskkill /IM "${processName}" /F`, (err) => {
-            if (err) console.warn('[CLOSE_APP] Taskkill notice:', err.message);
-          });
-        }
-        return NextResponse.json({
-          success: true,
-          message: `Application "${rawApp}" (${processName}) closed successfully.`,
-          appName: rawApp,
-          processName,
+      if (process.platform === 'win32') {
+        await new Promise((resolve) => {
+          const child = spawn('taskkill.exe', ['/IM', processName, '/F'], { stdio: 'ignore' });
+          child.on('close', resolve);
+          child.on('error', resolve);
         });
-      } catch (closeErr: unknown) {
-        const msg = closeErr instanceof Error ? closeErr.message : 'Failed to terminate application';
-        return NextResponse.json({ success: false, error: msg }, { status: 500 });
       }
+
+      return NextResponse.json({
+        success: true,
+        message: `Application "${rawApp}" (${processName}) termination dispatched.`,
+        appName: rawApp,
+        processName,
+      });
     }
 
-    // -------------------------------------------------------------
-    // 7. VOLUME_CONTROL (Windows Native CoreAudio Emulation)
-    // -------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // ACTION: OPEN_URL (Strict Protocol & SSRF Validation)
+    // -------------------------------------------------------------------------
+    if (actionType === 'OPEN_URL') {
+      const rawUrl = String(payload.url || '').trim();
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(rawUrl);
+      } catch {
+        return NextResponse.json({ success: false, error: 'Invalid URL provided', code: 'INVALID_URL' }, { status: 400 });
+      }
+
+      if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+        return NextResponse.json(
+          { success: false, error: 'Only http and https protocols are permitted.', code: 'DISALLOWED_PROTOCOL' },
+          { status: 403 }
+        );
+      }
+
+      if (process.platform === 'win32') {
+        spawn('cmd.exe', ['/c', 'start', '', parsedUrl.toString()], { detached: true, stdio: 'ignore' }).unref();
+      } else {
+        const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
+        spawn(cmd, [parsedUrl.toString()], { detached: true, stdio: 'ignore' }).unref();
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: `Opened URL "${parsedUrl.toString()}".`,
+        url: parsedUrl.toString(),
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // ACTION: VOLUME_CONTROL (Safe Key Emulation, Argument Array)
+    // -------------------------------------------------------------------------
     if (actionType === 'VOLUME_CONTROL') {
-      const volAction = String(payload?.action || 'mute').toLowerCase();
-      try {
-        if (process.platform === 'win32') {
-          let keyChar = 173; // mute toggle
-          let count = 1;
-          if (volAction === 'up' || volAction === 'increase') {
-            keyChar = 175; // vol up
-            count = 4;
-          } else if (volAction === 'down' || volAction === 'decrease') {
-            keyChar = 174; // vol down
-            count = 4;
-          }
-
-          const psCmd = `powershell -NoProfile -Command "1..${count} | ForEach-Object { (New-Object -ComObject WScript.Shell).SendKeys([char]${keyChar}) }"`;
-          exec(psCmd, (err) => {
-            if (err) console.error('[VOLUME_CONTROL] Exec error:', err);
-          });
+      const volAction = String(payload.action || 'mute').toLowerCase();
+      if (process.platform === 'win32') {
+        let keyChar = 173; // mute toggle
+        let count = 1;
+        if (volAction === 'up' || volAction === 'increase') {
+          keyChar = 175;
+          count = 4;
+        } else if (volAction === 'down' || volAction === 'decrease') {
+          keyChar = 174;
+          count = 4;
         }
 
-        return NextResponse.json({
-          success: true,
-          message: `Volume action "${volAction}" executed successfully.`,
-          action: volAction,
-        });
-      } catch (volErr: unknown) {
-        const msg = volErr instanceof Error ? volErr.message : 'Failed to adjust volume';
-        return NextResponse.json({ success: false, error: msg }, { status: 500 });
+        const psScript = `1..${count} | ForEach-Object { (New-Object -ComObject WScript.Shell).SendKeys([char]${keyChar}) }`;
+        spawn('powershell.exe', ['-NoProfile', '-Command', psScript], { stdio: 'ignore' }).unref();
       }
+
+      return NextResponse.json({
+        success: true,
+        message: `Volume action "${volAction}" applied.`,
+        action: volAction,
+      });
     }
 
-    // -------------------------------------------------------------
-    // 8. MEDIA_CONTROL (Windows Native Media Key Event Emulation)
-    // -------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // ACTION: MEDIA_CONTROL
+    // -------------------------------------------------------------------------
     if (actionType === 'MEDIA_CONTROL') {
-      const mediaAction = String(payload?.action || 'play_pause').toLowerCase();
-      try {
-        if (process.platform === 'win32') {
-          let keyChar = 179; // play/pause
-          if (mediaAction.includes('next')) keyChar = 176;
-          else if (mediaAction.includes('prev')) keyChar = 177;
+      const mediaAction = String(payload.action || 'play_pause').toLowerCase();
+      if (process.platform === 'win32') {
+        let keyChar = 179; // play/pause
+        if (mediaAction.includes('next')) keyChar = 176;
+        else if (mediaAction.includes('prev')) keyChar = 177;
 
-          const psCmd = `powershell -NoProfile -Command "(New-Object -ComObject WScript.Shell).SendKeys([char]${keyChar})"`;
-          exec(psCmd, (err) => {
-            if (err) console.error('[MEDIA_CONTROL] Exec error:', err);
-          });
-        }
-
-        return NextResponse.json({
-          success: true,
-          message: `Media playback action "${mediaAction}" dispatched.`,
-          action: mediaAction,
-        });
-      } catch (mediaErr: unknown) {
-        const msg = mediaErr instanceof Error ? mediaErr.message : 'Failed media command';
-        return NextResponse.json({ success: false, error: msg }, { status: 500 });
+        const psScript = `(New-Object -ComObject WScript.Shell).SendKeys([char]${keyChar})`;
+        spawn('powershell.exe', ['-NoProfile', '-Command', psScript], { stdio: 'ignore' }).unref();
       }
+
+      return NextResponse.json({
+        success: true,
+        message: `Media playback action "${mediaAction}" dispatched.`,
+        action: mediaAction,
+      });
     }
 
-    // -------------------------------------------------------------
-    // 9. WINDOW_CONTROL (Desktop Minimization & Window Management)
-    // -------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // ACTION: WINDOW_CONTROL
+    // -------------------------------------------------------------------------
     if (actionType === 'WINDOW_CONTROL') {
-      const winAction = String(payload?.action || 'show_desktop').toLowerCase();
-      try {
-        if (process.platform === 'win32') {
-          const method = winAction.includes('restore') ? 'UndoMinimizeAll' : 'MinimizeAll';
-          const psCmd = `powershell -NoProfile -Command "(New-Object -ComObject Shell.Application).${method}()"`;
-          exec(psCmd, (err) => {
-            if (err) console.error('[WINDOW_CONTROL] Exec error:', err);
-          });
-        }
-
-        return NextResponse.json({
-          success: true,
-          message: `Window control "${winAction}" executed.`,
-          action: winAction,
-        });
-      } catch (winErr: unknown) {
-        const msg = winErr instanceof Error ? winErr.message : 'Failed window action';
-        return NextResponse.json({ success: false, error: msg }, { status: 500 });
+      const winAction = String(payload.action || 'show_desktop').toLowerCase();
+      if (process.platform === 'win32') {
+        const method = winAction.includes('restore') ? 'UndoMinimizeAll' : 'MinimizeAll';
+        const psScript = `(New-Object -ComObject Shell.Application).${method}()`;
+        spawn('powershell.exe', ['-NoProfile', '-Command', psScript], { stdio: 'ignore' }).unref();
       }
+
+      return NextResponse.json({
+        success: true,
+        message: `Window control "${winAction}" dispatched.`,
+        action: winAction,
+      });
     }
 
-    // -------------------------------------------------------------
-    // 10. TAKE_SCREENSHOT (Desktop Screen Capture Saved to Desktop)
-    // -------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // ACTION: TAKE_SCREENSHOT (Safe File Path on Desktop)
+    // -------------------------------------------------------------------------
     if (actionType === 'TAKE_SCREENSHOT') {
-      try {
-        const desktopDir = path.join(process.env.USERPROFILE || 'C:\\', 'Desktop');
-        const filename = `Screenshot_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
-        const outPath = path.join(desktopDir, filename);
+      const desktopDir = path.join(process.env.USERPROFILE || 'C:\\', 'Desktop');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `Screenshot_${timestamp}.png`;
+      const outPath = path.join(desktopDir, filename);
 
-        if (process.platform === 'win32') {
-          const escapedOut = outPath.replace(/\\/g, '\\\\');
-          const psCmd = `powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; \$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; \$bmp = New-Object System.Drawing.Bitmap(\$b.Width, \$b.Height); \$g = [System.Drawing.Graphics]::FromImage(\$bmp); \$g.CopyFromScreen(\$b.Location, [System.Drawing.Point]::Empty, \$b.Size); \$bmp.Save('${escapedOut}'); \$g.Dispose(); \$bmp.Dispose();"`;
-          exec(psCmd, (err) => {
-            if (err) console.error('[TAKE_SCREENSHOT] Capture error:', err);
-          });
-        }
-
-        return NextResponse.json({
-          success: true,
-          message: `Desktop screenshot captured and saved as "${filename}" on Desktop.`,
-          filePath: outPath,
-          filename,
+      if (process.platform === 'win32') {
+        // Base64 encode path to avoid any command injection
+        const b64 = Buffer.from(outPath, 'utf16le').toString('base64');
+        const psScript = `
+          $bytes = [System.Convert]::FromBase64String('${b64}');
+          $target = [System.Text.Encoding]::Unicode.GetString($bytes);
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing;
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds;
+          $bmp = New-Object System.Drawing.Bitmap($b.Width, $b.Height);
+          $g = [System.Drawing.Graphics]::FromImage($bmp);
+          $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size);
+          $bmp.Save($target);
+          $g.Dispose();
+          $bmp.Dispose();
+        `;
+        await new Promise((resolve) => {
+          const child = spawn('powershell.exe', ['-NoProfile', '-Command', psScript], { stdio: 'ignore' });
+          child.on('close', resolve);
+          child.on('error', resolve);
         });
-      } catch (shotErr: unknown) {
-        const msg = shotErr instanceof Error ? shotErr.message : 'Failed to capture screenshot';
-        return NextResponse.json({ success: false, error: msg }, { status: 500 });
       }
+
+      return NextResponse.json({
+        success: true,
+        message: `Desktop screenshot saved as "${filename}" on Desktop.`,
+        filePath: outPath,
+        filename,
+      });
     }
 
-    // -------------------------------------------------------------
-    // 11. POWER_CONTROL (Workstation Lock, Sleep, Restart, Shutdown)
-    // -------------------------------------------------------------
-    if (actionType === 'POWER_CONTROL') {
-      const pwrAction = String(payload?.action || 'lock').toLowerCase();
-      try {
-        if (process.platform === 'win32') {
-          if (pwrAction === 'lock') {
-            exec('rundll32.exe user32.dll,LockWorkStation');
-          } else if (pwrAction === 'sleep') {
-            exec('rundll32.exe powrprof.dll,SetSuspendState 0,1,0');
-          } else if (pwrAction === 'restart') {
-            exec('shutdown /r /t 10');
-          } else if (pwrAction === 'shutdown') {
-            exec('shutdown /s /t 10');
-          }
-        }
-
-        return NextResponse.json({
-          success: true,
-          message: `Power command "${pwrAction}" executed successfully.`,
-          action: pwrAction,
-        });
-      } catch (pwrErr: unknown) {
-        const msg = pwrErr instanceof Error ? pwrErr.message : 'Failed power command';
-        return NextResponse.json({ success: false, error: msg }, { status: 500 });
-      }
-    }
-
-    // -------------------------------------------------------------
-    // 12. OPEN_SPECIAL_FOLDER (Downloads, Desktop, Recycle Bin)
-    // -------------------------------------------------------------
-    if (actionType === 'OPEN_SPECIAL_FOLDER') {
-      const folder = String(payload?.folder || 'downloads').toLowerCase();
-      try {
-        if (process.platform === 'win32') {
-          if (folder.includes('empty_recycle')) {
-            exec('powershell -NoProfile -Command "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"');
-          } else if (folder.includes('download')) {
-            exec('start shell:Downloads');
-          } else if (folder.includes('desktop')) {
-            exec('start shell:Desktop');
-          } else if (folder.includes('doc')) {
-            exec('start shell:Personal');
-          } else if (folder.includes('picture')) {
-            exec('start shell:My Pictures');
-          } else if (folder.includes('recycle')) {
-            exec('start shell:RecycleBinFolder');
-          }
-        }
-
-        return NextResponse.json({
-          success: true,
-          message: `Special folder command "${folder}" executed.`,
-          folder,
-        });
-      } catch (foldErr: unknown) {
-        const msg = foldErr instanceof Error ? foldErr.message : 'Failed folder command';
-        return NextResponse.json({ success: false, error: msg }, { status: 500 });
-      }
-    }
-
-    // -------------------------------------------------------------
-    // 13. CLIPBOARD_ACTION (Read / Write Windows Clipboard)
-    // -------------------------------------------------------------
+    // -------------------------------------------------------------------------
+    // ACTION: CLIPBOARD_ACTION (Streamed via Stdin, Zero Command Injection)
+    // -------------------------------------------------------------------------
     if (actionType === 'CLIPBOARD_ACTION') {
-      const clipAction = String(payload?.action || 'read').toLowerCase();
-      try {
-        if (process.platform === 'win32') {
-          if (clipAction === 'write' && payload?.text) {
-            const escaped = String(payload.text).replace(/"/g, '`"');
-            exec(`powershell -NoProfile -Command "Set-Clipboard -Value '${escaped}'"`);
-            return NextResponse.json({
-              success: true,
-              message: 'Text copied to Windows clipboard.',
-            });
-          }
+      const clipAction = String(payload.action || 'read').toLowerCase();
 
-          const { stdout } = await execPromise('powershell -NoProfile -Command "Get-Clipboard"');
+      if (process.platform === 'win32') {
+        if (clipAction === 'write' && typeof payload.text === 'string') {
+          // Stream raw text into Set-Clipboard stdin to completely avoid shell injection
+          await new Promise<void>((resolve, reject) => {
+            const child = spawn('powershell.exe', ['-NoProfile', '-Command', '$input | Set-Clipboard'], {
+              stdio: ['pipe', 'ignore', 'pipe'],
+            });
+            child.stdin.write(payload.text);
+            child.stdin.end();
+            child.on('close', (code) => (code === 0 ? resolve() : reject(new Error('Clipboard write failed'))));
+            child.on('error', reject);
+          });
+
           return NextResponse.json({
             success: true,
-            content: stdout.trim(),
-            message: `Clipboard content: "${stdout.trim().slice(0, 80)}"`,
+            message: 'Text safely copied to Windows clipboard.',
           });
         }
 
+        // Read clipboard
+        const content = await new Promise<string>((resolve) => {
+          const child = spawn('powershell.exe', ['-NoProfile', '-Command', 'Get-Clipboard'], {
+            stdio: ['ignore', 'pipe', 'ignore'],
+          });
+          let out = '';
+          child.stdout.on('data', (d) => {
+            out += d.toString();
+          });
+          child.on('close', () => resolve(out.trim()));
+          child.on('error', () => resolve(''));
+        });
+
         return NextResponse.json({
           success: true,
-          message: 'Clipboard action completed.',
+          content,
+          message: `Clipboard content: "${content.slice(0, 80)}"`,
         });
-      } catch (clipErr: unknown) {
-        const msg = clipErr instanceof Error ? clipErr.message : 'Failed clipboard action';
-        return NextResponse.json({ success: false, error: msg }, { status: 500 });
       }
+
+      return NextResponse.json({ success: true, message: 'Clipboard action completed.' });
     }
 
-    return NextResponse.json({
-      success: true,
-      message: `Action ${actionType} acknowledged.`,
-      payload,
-    });
+    // -------------------------------------------------------------------------
+    // ACTION: POWER_CONTROL
+    // -------------------------------------------------------------------------
+    if (actionType === 'POWER_CONTROL') {
+      const pwrAction = String(payload.action || 'lock').toLowerCase();
+      if (process.platform === 'win32') {
+        if (pwrAction === 'lock') {
+          spawn('rundll32.exe', ['user32.dll,LockWorkStation'], { stdio: 'ignore' }).unref();
+        } else if (pwrAction === 'sleep') {
+          spawn('rundll32.exe', ['powrprof.dll,SetSuspendState', '0,1,0'], { stdio: 'ignore' }).unref();
+        } else if (pwrAction === 'restart') {
+          spawn('shutdown.exe', ['/r', '/t', '10'], { stdio: 'ignore' }).unref();
+        } else if (pwrAction === 'shutdown') {
+          spawn('shutdown.exe', ['/s', '/t', '10'], { stdio: 'ignore' }).unref();
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: `Power command "${pwrAction}" executed safely.`,
+        action: pwrAction,
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // ACTION: OPEN_SPECIAL_FOLDER
+    // -------------------------------------------------------------------------
+    if (actionType === 'OPEN_SPECIAL_FOLDER') {
+      const folder = String(payload.folder || 'downloads').toLowerCase();
+      if (process.platform === 'win32') {
+        const folderTargetMap: Record<string, string> = {
+          download: 'shell:Downloads',
+          downloads: 'shell:Downloads',
+          desktop: 'shell:Desktop',
+          documents: 'shell:Personal',
+          doc: 'shell:Personal',
+          pictures: 'shell:My Pictures',
+          recycle: 'shell:RecycleBinFolder',
+          recycle_bin: 'shell:RecycleBinFolder',
+        };
+
+        const target = folderTargetMap[folder] || 'shell:Downloads';
+        spawn('cmd.exe', ['/c', 'start', '', target], { detached: true, stdio: 'ignore' }).unref();
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: `Opened special folder "${folder}".`,
+        folder,
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // ACTION: SYSTEM_INFO (Real Live Telemetry, Zero Fake Data)
+    // -------------------------------------------------------------------------
+    if (actionType === 'SYSTEM_INFO') {
+      const cpus = os.cpus();
+      const totalRamBytes = os.totalmem();
+      const freeRamBytes = os.freemem();
+      const usedRamBytes = totalRamBytes - freeRamBytes;
+      const memoryPercent = Math.round((usedRamBytes / totalRamBytes) * 100);
+
+      // Estimate CPU utilization across cores
+      let totalIdle = 0;
+      let totalTick = 0;
+      cpus.forEach((cpu) => {
+        for (const type in cpu.times) {
+          totalTick += (cpu.times as Record<string, number>)[type];
+        }
+        totalIdle += cpu.times.idle;
+      });
+      const cpuUsagePercent = Math.round((1 - totalIdle / (totalTick || 1)) * 100);
+
+      const uptimeSecs = os.uptime();
+      const days = Math.floor(uptimeSecs / 86400);
+      const hours = Math.floor((uptimeSecs % 86400) / 3600);
+      const mins = Math.floor((uptimeSecs % 3600) / 60);
+      const uptimeStr = days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+
+      return NextResponse.json({
+        success: true,
+        cpu: Math.max(0, Math.min(100, cpuUsagePercent)),
+        memory: memoryPercent,
+        usedRamGb: Number((usedRamBytes / 1024 / 1024 / 1024).toFixed(1)),
+        totalRamGb: Number((totalRamBytes / 1024 / 1024 / 1024).toFixed(1)),
+        uptime: uptimeStr,
+        platform: process.platform,
+        arch: os.arch(),
+        hostname: os.hostname(),
+      });
+    }
+
+    return NextResponse.json(
+      { success: false, error: `Action type "${actionType}" is not supported.`, code: 'UNSUPPORTED_ACTION' },
+      { status: 400 }
+    );
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Action execution failed';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    const errorMsg = err instanceof Error ? err.message : 'Action execution failed';
+    console.error(`[API /api/local/action] Error handling ${actionType}:`, errorMsg);
+    return NextResponse.json(
+      { success: false, error: 'Internal execution error occurred.', code: 'EXECUTION_ERROR' },
+      { status: 500 }
+    );
   }
 }

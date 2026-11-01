@@ -27,8 +27,11 @@ export function getDefaultProviderConnections(): ProviderConnectionMetadata[] {
   return [];
 }
 
+// In-memory volatile secret vault (never written to persistent browser localStorage)
+const memorySecretVault = new Map<string, string>();
+
 /**
- * Loads stored connections from client localStorage.
+ * Loads stored connections from client localStorage and merges with in-memory secrets.
  */
 export function getStoredProviderConnections(): ProviderConnectionMetadata[] {
   if (typeof window === 'undefined') return [];
@@ -38,7 +41,13 @@ export function getStoredProviderConnections(): ProviderConnectionMetadata[] {
       return [];
     }
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed)) {
+      return parsed.map((item: ProviderConnectionMetadata) => ({
+        ...item,
+        // Re-attach in-memory secret if available for current session
+        rawKey: memorySecretVault.get(item.id) || undefined,
+      }));
+    }
     return [];
   } catch {
     return [];
@@ -46,12 +55,26 @@ export function getStoredProviderConnections(): ProviderConnectionMetadata[] {
 }
 
 /**
- * Saves connections to client localStorage and notifies listeners.
+ * Saves connections to client localStorage with rawKey SCRUBBED for security.
  */
 export function saveStoredProviderConnections(connections: ProviderConnectionMetadata[]): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEY_PROVIDERS, JSON.stringify(connections));
+    // 1. Stash raw keys into transient memory vault
+    connections.forEach((conn) => {
+      if (conn.rawKey) {
+        memorySecretVault.set(conn.id, conn.rawKey);
+      }
+    });
+
+    // 2. Scrub rawKey before saving to persistent localStorage
+    const scrubbed = connections.map((conn) => {
+      const copy = { ...conn };
+      delete copy.rawKey;
+      return copy;
+    });
+
+    localStorage.setItem(STORAGE_KEY_PROVIDERS, JSON.stringify(scrubbed));
     window.dispatchEvent(
       new CustomEvent('susi-providers-updated', { detail: { connections } })
     );

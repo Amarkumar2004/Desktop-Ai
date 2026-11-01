@@ -18,6 +18,7 @@ import { createTask } from '@/backend/services/taskService';
 import { useToast } from '@/lib/toast/ToastContext';
 import { ApprovalService } from '@/lib/security/approvalService';
 import { PermissionRequest } from '@/lib/security/types';
+import { ActionPipeline, type PipelineActionState } from '@/lib/actions/ActionPipeline';
 
 interface VoiceHistoryItem {
   role: 'user' | 'assistant';
@@ -106,6 +107,8 @@ export default function OracleVoiceCard({
   const [sessionState, setSessionState] = useState<VoiceState>('idle');
   const [liveTranscript, setLiveTranscript] = useState<string>('');
   const [pendingPerm, setPendingPerm] = useState<PermissionRequest | null>(null);
+  // P0 FIX: Subscribe to ActionPipeline for UI display (read-only; never dispatch from here)
+  const [pipelineStates, setPipelineStates] = useState<PipelineActionState[]>([]);
 
   const engineRef = useRef<HybridVoiceEngine | null>(null);
   const stateRef = useRef<VoiceState>('idle');
@@ -133,6 +136,31 @@ export default function OracleVoiceCard({
     return ApprovalService.onPermissionChange((req) => {
       setPendingPerm(req);
     });
+  }, []);
+
+  // Subscribe to ActionPipeline for action status display (P0 fix -- display only, no dispatch)
+  useEffect(() => {
+    return ActionPipeline.onStateUpdate((states) => {
+      setPipelineStates([...states]);//
+      // Show toast for completed/failed actions
+      states.forEach((s) => {
+        if (s.status === 'completed') {
+          propsRef.current.success('Action Done', s.message || s.type);
+        } else if (s.status === 'failed') {
+          propsRef.current.errorToast('Action Failed', s.error || s.message);
+        } else if (s.status === 'blocked') {
+          propsRef.current.errorToast('Action Blocked', s.message);
+        }
+      });
+      // Clear completed states after toast display
+      const hasTerminal = states.some((s) =>
+        s.status === 'completed' || s.status === 'failed' || s.status === 'blocked' || s.status === 'cancelled'
+      );
+      if (hasTerminal) {
+        setTimeout(() => ActionPipeline.clearCompleted(), 3000);
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Initialize Hybrid Voice Engine (mount only once)
@@ -197,54 +225,9 @@ export default function OracleVoiceCard({
         } catch {}
         propsRef.current.info('Tab Switched', `Opened ${targetTab.toUpperCase()} tab.`);
       }
-
-      // Multi-Action Execution Queue (Sequential & Order-Preserving)
-      const executableTypes = [
-        'OPEN_APP',
-        'CLOSE_APP',
-        'VOLUME_CONTROL',
-        'MEDIA_CONTROL',
-        'WINDOW_CONTROL',
-        'TAKE_SCREENSHOT',
-        'POWER_CONTROL',
-        'OPEN_SPECIAL_FOLDER',
-        'CLIPBOARD_ACTION',
-      ];
-
-      const allActions = Array.isArray(res.actions) && res.actions.length > 0
-        ? res.actions
-        : res.action ? [res.action] : [];
-
-      const filteredActions = allActions.filter((a) => a && executableTypes.includes(a.type));
-
-      if (filteredActions.length > 0) {
-        (async () => {
-          for (let i = 0; i < filteredActions.length; i++) {
-            const act = filteredActions[i];
-            try {
-              const r = await fetch('/api/local/action', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  actionType: act.type,
-                  payload: act.payload || {},
-                }),
-              });
-              const data = await r.json();
-              if (data.success) {
-                propsRef.current.success('Action Executed', data.message || `${act.type} executed.`);
-              } else {
-                propsRef.current.errorToast('Action Failed', data.error || `Could not execute ${act.type}`);
-              }
-            } catch (err: any) {
-              propsRef.current.errorToast('Action Error', err.message);
-            }
-            if (i < filteredActions.length - 1) {
-              await new Promise((resolve) => setTimeout(resolve, 250));
-            }
-          }
-        })();
-      }
+      // P0 FIX: Actions are EXCLUSIVELY dispatched by VoiceEngine via ActionPipeline.
+      // VoiceCard must NOT call /api/local/action -- doing so causes duplicate execution.
+      // Subscribe to ActionPipeline state below for UI display only.
     });
 
     const unErr = engine.onError((err) => {

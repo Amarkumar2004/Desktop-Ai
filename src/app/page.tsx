@@ -537,7 +537,7 @@ function DashboardContent() {
         .then((r) => r.json())
         .then((d) => {
           if (d.success) success('Closed', `Closed ${app.toUpperCase()} on Windows.`);
-          else errorToast('Close Failed', d.error || 'Failed to terminate app');
+          else toastError('Close Failed', d.error || 'Failed to terminate app');
         })
         .catch(() => {});
       reply = `${ts} [APP] Requested termination of "${app.toUpperCase()}".`;

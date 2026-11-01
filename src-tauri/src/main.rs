@@ -1,14 +1,14 @@
 // Prevents additional console window on Windows in release build
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct GpuMetrics {
     gpu_percent: f32,
     vram_used_gb: f32,
@@ -55,11 +55,6 @@ fn fetch_nvidia_gpu_metrics() -> GpuMetrics {
         return GpuMetrics::default();
     }
 
-    // Index 0: name ("NVIDIA GeForce RTX 3050 Laptop GPU")
-    // Index 1: temperature.gpu
-    // Index 2: utilization.gpu
-    // Index 3: memory.used (MiB)
-    // Index 4: memory.total (MiB)
     let gpu_temp_celsius = parts[1].parse::<f32>().unwrap_or(0.0);
     let gpu_percent = parts[2].parse::<f32>().unwrap_or(0.0).clamp(0.0, 100.0);
     let vram_used_mb = parts[3].parse::<f32>().unwrap_or(0.0);
@@ -83,7 +78,7 @@ fn fetch_nvidia_gpu_metrics() -> GpuMetrics {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct SystemMetrics {
     cpu_percent: f32,
     memory_percent: f32,
@@ -95,6 +90,21 @@ struct SystemMetrics {
     vram_total_gb: f32,
     vram_percent: f32,
     gpu_temp_celsius: f32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct InstalledApp {
+    name: String,
+    version: Option<String>,
+    publisher: Option<String>,
+    exe_path: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct ActionResult {
+    success: bool,
+    message: String,
+    result: Option<serde_json::Value>,
 }
 
 struct AppState {
@@ -153,48 +163,338 @@ fn get_system_metrics(state: tauri::State<AppState>) -> Result<SystemMetrics, St
     })
 }
 
+/// Scans installed Windows applications from the Registry
 #[tauri::command]
-fn execute_pc_action(action_type: String, target: Option<String>) -> Result<String, String> {
-    match action_type.to_uppercase().as_str() {
-        "LOCK" => {
+fn scan_installed_apps() -> Result<Vec<InstalledApp>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+
+        let mut apps: Vec<InstalledApp> = Vec::new();
+        let subkeys = [
+            (HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (HKEY_LOCAL_MACHINE, r"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        ];
+
+        for (hive, path) in subkeys {
+            let root = RegKey::predef(hive);
+            if let Ok(key) = root.open_subkey(path) {
+                for name_res in key.enum_keys().map(|x| x.unwrap_or_default()) {
+                    if let Ok(subkey) = key.open_subkey(&name_res) {
+                        let display_name: String = subkey.get_value("DisplayName").unwrap_or_default();
+                        if !display_name.trim().is_empty() {
+                            let version: Option<String> = subkey.get_value("DisplayVersion").ok();
+                            let publisher: Option<String> = subkey.get_value("Publisher").ok();
+                            let exe_path: Option<String> = subkey.get_value("DisplayIcon").ok();
+
+                            apps.push(InstalledApp {
+                                name: display_name.trim().to_string(),
+                                version,
+                                publisher,
+                                exe_path,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Deduplicate by name
+        apps.sort_by(|a, b| a.name.cmp(&b.name));
+        apps.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
+
+        Ok(apps)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    Ok(Vec::new())
+}
+
+/// Executes a verified native PC action
+#[tauri::command]
+fn execute_pc_action(
+    action_type: String,
+    target: Option<String>,
+    payload: Option<serde_json::Value>,
+) -> Result<ActionResult, String> {
+    let act = action_type.to_uppercase();
+    let pl = payload.unwrap_or(serde_json::json!({}));
+
+    match act.as_str() {
+        "OPEN_APP" => {
+            let app = target
+                .or_else(|| pl.get("appName").and_then(|v| v.as_str()).map(String::from))
+                .or_else(|| pl.get("target").and_then(|v| v.as_str()).map(String::from))
+                .unwrap_or_else(|| "chrome".to_string());
+
             #[cfg(target_os = "windows")]
             {
-                let mut cmd = std::process::Command::new("rundll32.exe");
-                cmd.args(&["user32.dll,LockWorkStation"]);
+                let app_lower = app.to_lowercase();
+                let binary: &str = match app_lower.as_str() {
+                    "chrome" | "google chrome" => "chrome.exe",
+                    "notepad" => "notepad.exe",
+                    "calc" | "calculator" => "calc.exe",
+                    "code" | "vscode" | "vs code" => "code",
+                    "paint" | "mspaint" => "mspaint.exe",
+                    "edge" => "msedge.exe",
+                    "settings" => "ms-settings:",
+                    "spotify" => "spotify:",
+                    "discord" => "discord:",
+                    _ => &app,
+                };
+
+                let mut cmd = std::process::Command::new("cmd.exe");
+                cmd.args(&["/c", "start", "", binary]);
                 cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
                 cmd.spawn().map_err(|e| e.to_string())?;
-                Ok("Workstation locked.".to_string())
+
+                Ok(ActionResult {
+                    success: true,
+                    message: format!("Successfully launched \"{}\"", app),
+                    result: Some(serde_json::json!({ "appName": app, "binary": binary })),
+                })
             }
             #[cfg(not(target_os = "windows"))]
-            Ok("Unsupported on this OS".to_string())
-        }
-        "SHOW_DESKTOP" => {
-            #[cfg(target_os = "windows")]
-            {
-                let mut cmd = std::process::Command::new("powershell");
-                cmd.args(&["-NoProfile", "-Command", "(New-Object -ComObject Shell.Application).MinimizeAll()"]);
-                cmd.creation_flags(0x08000000);
-                cmd.spawn().map_err(|e| e.to_string())?;
-                Ok("Desktop shown.".to_string())
-            }
-            #[cfg(not(target_os = "windows"))]
-            Ok("Unsupported on this OS".to_string())
+            Ok(ActionResult {
+                success: false,
+                message: "Unsupported on this OS".to_string(),
+                result: None,
+            })
         }
         "CLOSE_APP" => {
-            let app = target.unwrap_or_else(|| "notepad.exe".to_string());
+            let app = target
+                .or_else(|| pl.get("appName").and_then(|v| v.as_str()).map(String::from))
+                .or_else(|| pl.get("target").and_then(|v| v.as_str()).map(String::from))
+                .unwrap_or_default();
+
+            if app.is_empty() {
+                return Ok(ActionResult {
+                    success: false,
+                    message: "appName is required to close application".to_string(),
+                    result: None,
+                });
+            }
+
+            let proc_name = if !app.ends_with(".exe") {
+                format!("{}.exe", app)
+            } else {
+                app.clone()
+            };
+
+            // Block critical system processes
+            let critical = ["csrss.exe", "lsass.exe", "explorer.exe", "services.exe", "smss.exe", "wininit.exe", "taskmgr.exe"];
+            if critical.iter().any(|c| c.eq_ignore_ascii_case(&proc_name)) {
+                return Ok(ActionResult {
+                    success: false,
+                    message: format!("Terminating critical process \"{}\" is blocked.", proc_name),
+                    result: None,
+                });
+            }
+
             #[cfg(target_os = "windows")]
             {
-                let proc_name = if !app.ends_with(".exe") { format!("{}.exe", app) } else { app };
                 let mut cmd = std::process::Command::new("taskkill");
                 cmd.args(&["/IM", &proc_name, "/F"]);
                 cmd.creation_flags(0x08000000);
                 cmd.spawn().map_err(|e| e.to_string())?;
-                Ok(format!("Closed {}.", proc_name))
+
+                Ok(ActionResult {
+                    success: true,
+                    message: format!("Closed application process \"{}\".", proc_name),
+                    result: Some(serde_json::json!({ "process": proc_name })),
+                })
             }
             #[cfg(not(target_os = "windows"))]
-            Ok("Unsupported on this OS".to_string())
+            Ok(ActionResult {
+                success: false,
+                message: "Unsupported on this OS".to_string(),
+                result: None,
+            })
         }
-        _ => Ok(format!("Action {} acknowledged", action_type))
+        "OPEN_URL" => {
+            let url = pl.get("url").and_then(|v| v.as_str()).unwrap_or_default();
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                return Ok(ActionResult {
+                    success: false,
+                    message: "Only http and https URLs are allowed.".to_string(),
+                    result: None,
+                });
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                let mut cmd = std::process::Command::new("cmd.exe");
+                cmd.args(&["/c", "start", "", url]);
+                cmd.creation_flags(0x08000000);
+                cmd.spawn().map_err(|e| e.to_string())?;
+
+                Ok(ActionResult {
+                    success: true,
+                    message: format!("Opened URL \"{}\"", url),
+                    result: Some(serde_json::json!({ "url": url })),
+                })
+            }
+            #[cfg(not(target_os = "windows"))]
+            Ok(ActionResult {
+                success: false,
+                message: "Unsupported on this OS".to_string(),
+                result: None,
+            })
+        }
+        "VOLUME_CONTROL" => {
+            let action = pl.get("action").and_then(|v| v.as_str()).unwrap_or("mute").to_lowercase();
+            #[cfg(target_os = "windows")]
+            {
+                let (key_char, count) = match action.as_str() {
+                    "up" | "increase" => (175, 4),
+                    "down" | "decrease" => (174, 4),
+                    _ => (173, 1), // mute
+                };
+                let ps_cmd = format!(
+                    "1..{} | ForEach-Object {{ (New-Object -ComObject WScript.Shell).SendKeys([char]{}) }}",
+                    count, key_char
+                );
+                let mut cmd = std::process::Command::new("powershell");
+                cmd.args(&["-NoProfile", "-Command", &ps_cmd]);
+                cmd.creation_flags(0x08000000);
+                cmd.spawn().map_err(|e| e.to_string())?;
+
+                Ok(ActionResult {
+                    success: true,
+                    message: format!("Volume action \"{}\" executed.", action),
+                    result: Some(serde_json::json!({ "action": action })),
+                })
+            }
+            #[cfg(not(target_os = "windows"))]
+            Ok(ActionResult {
+                success: false,
+                message: "Unsupported on this OS".to_string(),
+                result: None,
+            })
+        }
+        "MEDIA_CONTROL" => {
+            let action = pl.get("action").and_then(|v| v.as_str()).unwrap_or("play_pause").to_lowercase();
+            #[cfg(target_os = "windows")]
+            {
+                let key_char = if action.contains("next") {
+                    176
+                } else if action.contains("prev") {
+                    177
+                } else {
+                    179 // play/pause
+                };
+                let ps_cmd = format!("(New-Object -ComObject WScript.Shell).SendKeys([char]{})", key_char);
+                let mut cmd = std::process::Command::new("powershell");
+                cmd.args(&["-NoProfile", "-Command", &ps_cmd]);
+                cmd.creation_flags(0x08000000);
+                cmd.spawn().map_err(|e| e.to_string())?;
+
+                Ok(ActionResult {
+                    success: true,
+                    message: format!("Media control \"{}\" dispatched.", action),
+                    result: Some(serde_json::json!({ "action": action })),
+                })
+            }
+            #[cfg(not(target_os = "windows"))]
+            Ok(ActionResult {
+                success: false,
+                message: "Unsupported on this OS".to_string(),
+                result: None,
+            })
+        }
+        "WINDOW_CONTROL" => {
+            let action = pl.get("action").and_then(|v| v.as_str()).unwrap_or("show_desktop").to_lowercase();
+            #[cfg(target_os = "windows")]
+            {
+                let method = if action.contains("restore") {
+                    "UndoMinimizeAll"
+                } else {
+                    "MinimizeAll"
+                };
+                let ps_cmd = format!("(New-Object -ComObject Shell.Application).{}()", method);
+                let mut cmd = std::process::Command::new("powershell");
+                cmd.args(&["-NoProfile", "-Command", &ps_cmd]);
+                cmd.creation_flags(0x08000000);
+                cmd.spawn().map_err(|e| e.to_string())?;
+
+                Ok(ActionResult {
+                    success: true,
+                    message: format!("Window control \"{}\" executed.", action),
+                    result: Some(serde_json::json!({ "action": action })),
+                })
+            }
+            #[cfg(not(target_os = "windows"))]
+            Ok(ActionResult {
+                success: false,
+                message: "Unsupported on this OS".to_string(),
+                result: None,
+            })
+        }
+        "LOCK" | "POWER_CONTROL" => {
+            let pwr = pl.get("action").and_then(|v| v.as_str()).unwrap_or("lock").to_lowercase();
+            #[cfg(target_os = "windows")]
+            {
+                if pwr == "lock" || act == "LOCK" {
+                    let mut cmd = std::process::Command::new("rundll32.exe");
+                    cmd.args(&["user32.dll,LockWorkStation"]);
+                    cmd.creation_flags(0x08000000);
+                    cmd.spawn().map_err(|e| e.to_string())?;
+                } else if pwr == "sleep" {
+                    let mut cmd = std::process::Command::new("rundll32.exe");
+                    cmd.args(&["powrprof.dll,SetSuspendState", "0,1,0"]);
+                    cmd.creation_flags(0x08000000);
+                    cmd.spawn().map_err(|e| e.to_string())?;
+                }
+
+                Ok(ActionResult {
+                    success: true,
+                    message: format!("Power action \"{}\" executed.", pwr),
+                    result: Some(serde_json::json!({ "action": pwr })),
+                })
+            }
+            #[cfg(not(target_os = "windows"))]
+            Ok(ActionResult {
+                success: false,
+                message: "Unsupported on this OS".to_string(),
+                result: None,
+            })
+        }
+        "OPEN_SPECIAL_FOLDER" => {
+            let folder = pl.get("folder").and_then(|v| v.as_str()).unwrap_or("downloads").to_lowercase();
+            #[cfg(target_os = "windows")]
+            {
+                let target_shell = match folder.as_str() {
+                    "desktop" => "shell:Desktop",
+                    "documents" | "doc" => "shell:Personal",
+                    "pictures" => "shell:My Pictures",
+                    "recycle" | "recycle_bin" => "shell:RecycleBinFolder",
+                    _ => "shell:Downloads",
+                };
+                let mut cmd = std::process::Command::new("cmd.exe");
+                cmd.args(&["/c", "start", "", target_shell]);
+                cmd.creation_flags(0x08000000);
+                cmd.spawn().map_err(|e| e.to_string())?;
+
+                Ok(ActionResult {
+                    success: true,
+                    message: format!("Opened special folder \"{}\".", folder),
+                    result: Some(serde_json::json!({ "folder": folder })),
+                })
+            }
+            #[cfg(not(target_os = "windows"))]
+            Ok(ActionResult {
+                success: false,
+                message: "Unsupported on this OS".to_string(),
+                result: None,
+            })
+        }
+        _ => Ok(ActionResult {
+            success: false,
+            message: format!("Action \"{}\" is not natively supported.", action_type),
+            result: None,
+        }),
     }
 }
 
@@ -209,7 +509,11 @@ fn main() {
         .manage(AppState {
             sys: Mutex::new(sys),
         })
-        .invoke_handler(tauri::generate_handler![get_system_metrics, execute_pc_action])
+        .invoke_handler(tauri::generate_handler![
+            get_system_metrics,
+            scan_installed_apps,
+            execute_pc_action
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

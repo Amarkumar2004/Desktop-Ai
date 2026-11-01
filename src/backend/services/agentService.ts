@@ -1,5 +1,6 @@
 import type { Agent, AgentStatus, AgentId } from '@/types/dashboard';
 import { INITIAL_AGENTS } from '@/data/initialData';
+import { createClient, isSupabaseConfigured } from '@/backend/supabase/client';
 
 const STORAGE_KEY_AGENTS = 'susi_ai_agents_v2';
 
@@ -28,6 +29,30 @@ export function saveStoredAgents(agents: Agent[]): void {
 }
 
 export async function getAgents(): Promise<Agent[]> {
+  if (isSupabaseConfigured()) {
+    try {
+      const supabase = createClient();
+      if (supabase) {
+        const { data, error } = await (supabase as any).from('agents').select('*');
+        if (!error && data && data.length > 0) {
+          const mapped: Agent[] = data.map((a: any) => {
+            const match = INITIAL_AGENTS.find((ia) => ia.id.toLowerCase() === a.id?.toLowerCase()) || INITIAL_AGENTS[0];
+            return {
+              ...match,
+              name: a.name || match.name,
+              role: a.role || match.role,
+              status: (a.status as AgentStatus) || match.status,
+            };
+          });
+          saveStoredAgents(mapped);
+          return mapped;
+        }
+      }
+    } catch (err) {
+      console.warn('[agentService] Supabase agents fallback to local cache:', err);
+    }
+  }
+
   return getStoredAgents();
 }
 
@@ -53,36 +78,25 @@ export async function updateAgentStatus(
 
   if (updatedAgent) {
     saveStoredAgents(updated);
+
+    if (isSupabaseConfigured()) {
+      try {
+        const supabase = createClient();
+        if (supabase) {
+          await (supabase as any).from('agents').update({
+            status: status.toLowerCase(),
+          }).eq('id', agentId);
+        }
+      } catch (err) {
+        console.warn('[agentService] Supabase agent status update notice:', err);
+      }
+    }
   }
+
   return updatedAgent;
 }
 
-export async function addAgent(agentData: Partial<Agent> & { name: string; role: string }): Promise<Agent> {
-  const agents = getStoredAgents();
-  const id = agentData.name.toLowerCase().replace(/\s+/g, '-') as AgentId;
-  const newAgent: Agent = {
-    id,
-    name: agentData.name.toUpperCase(),
-    role: agentData.role,
-    title: agentData.title || `${agentData.name} Specialist`,
-    status: (agentData.status as AgentStatus) || 'Online',
-    color: agentData.color || '#3B82F6',
-    accentColor: agentData.accentColor || 'rgb(59, 130, 246)',
-    bgLight: 'bg-blue-50',
-    borderLight: 'border-blue-200',
-    textColor: 'text-blue-700',
-    avatarSeed: `${id}_avatar`,
-    room: agentData.room || 'research-lab',
-    specialty: agentData.specialty || 'General Intelligence & Analytics',
-    efficiency: agentData.efficiency || 98.0,
-    memoryUsage: '3.0 GB',
-    taskCount: 0,
-    currentTask: 'Ready for assignment',
-    level: 1,
-    coordinates: { x: 400, y: 200 },
-  };
-
-  const updated = [...agents, newAgent];
-  saveStoredAgents(updated);
-  return newAgent;
+export async function getAgentById(id: AgentId): Promise<Agent | undefined> {
+  const agents = await getAgents();
+  return agents.find((a) => a.id.toLowerCase() === id.toLowerCase());
 }

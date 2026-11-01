@@ -34,7 +34,7 @@ function extractFilename(text: string): string {
 }
 
 const GEMINI_MODELS = [
-  'gemini-2.5-flash',
+  'gemini-2.0-flash',
   'gemini-2.0-flash-exp',
   'gemini-1.5-flash',
   'gemini-1.5-pro',
@@ -203,9 +203,9 @@ export async function POST(req: NextRequest) {
       return { assignedAgent: "LEX", action: { type: "NAVIGATE_TAB", payload: { tab: "agents" } } };
     }
 
-    // 4. System info
-    if (clLower.includes("telemetry") || clLower.includes("system info") || clLower.includes("cpu usage")) {
-      return { assignedAgent: "LEX", action: { type: "SYSTEM_INFO", payload: { cpu: 28, memory: 52, uptime: "2d 14h" } } };
+    // 4. System info — REAL: fetched dynamically, not hardcoded
+    if (clLower.includes("telemetry") || clLower.includes("system info") || clLower.includes("cpu usage") || clLower.includes("ram") || clLower.includes("memory info")) {
+      return { assignedAgent: "LEX", action: { type: "SYSTEM_INFO", payload: {} } };
     }
 
     // 5. Screenshot
@@ -370,7 +370,7 @@ export async function POST(req: NextRequest) {
 
   // Multi-clause conjunction splitting
   const conjunctRegex = /\b(?:aur\s+phir|aur\s+saath\s+mein|and\s+then|and\s+also|ke\s+baad)\b|[;,]|\b(?:aur|and)\b/i;
-  const rawParts = prompt.split(conjunctRegex).map((p) => p.trim()).filter((p) => p.length > 0);
+  const rawParts = prompt.split(conjunctRegex).map((p: string) => p.trim()).filter((p: string) => p.length > 0);
 
   const actions: any[] = [];
   let assignedAgent: "LEX" | "SUSI" | "SPY" | "YORU" = "SUSI";
@@ -439,7 +439,7 @@ export async function POST(req: NextRequest) {
 
       if (isValidKey) {
         console.log(`[Gemini API] Requesting Gemini for prompt: "${prompt.slice(0, 50)}..."`);
-        const candidateModels = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash'];
+        const candidateModels = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
         const historyText = history
           .slice(-4)
           .map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`)
