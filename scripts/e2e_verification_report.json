@@ -1,25 +1,53 @@
 [
   {
     "category": "Security",
-    "test": "Block Unauthorized Local Access (Missing Token)",
+    "test": "Reject Unauthenticated GET on Session Endpoint (405)",
     "passed": true,
-    "actualResult": "HTTP Status 401: Unauthorized: Missing required desktop authorization token in request header or cookie.",
-    "evidence": "{\"success\":false,\"error\":\"Unauthorized: Missing required desktop authorization token in request header or cookie.\",\"code\":\"UNAUTHORIZED_ACCESS\"}",
-    "limitations": "Unauthorized local callers lacking SUSI desktop auth session are strictly blocked."
+    "actualResult": "HTTP Status 405: Method Not Allowed: Desktop session establishment requires an authenticated POST request with bootstrap proof.",
+    "evidence": "{\"success\":false,\"error\":\"Method Not Allowed: Desktop session establishment requires an authenticated POST request with bootstrap proof.\",\"code\":\"METHOD_NOT_ALLOWED\"}",
+    "limitations": "GET requests are strictly prohibited to prevent arbitrary secret snooping."
   },
   {
     "category": "Security",
-    "test": "Desktop Auth Session Handshake & Token Acquisition",
+    "test": "Reject Session Request Without Bootstrap Token (401)",
     "passed": true,
-    "actualResult": "HTTP Status 200: Received 256-bit cryptographically signed session token",
-    "evidence": "{\"success\":true,\"tokenLength\":64}"
+    "actualResult": "HTTP Status 401: Unauthorized: Missing required desktop bootstrap proof.",
+    "evidence": "{\"success\":false,\"error\":\"Unauthorized: Missing required desktop bootstrap proof.\",\"code\":\"MISSING_BOOTSTRAP_TOKEN\"}"
+  },
+  {
+    "category": "Security",
+    "test": "Reject Session Request With Forged Bootstrap Token (401)",
+    "passed": true,
+    "actualResult": "HTTP Status 401: Unauthorized: Invalid desktop bootstrap token.",
+    "evidence": "{\"success\":false,\"error\":\"Unauthorized: Invalid desktop bootstrap token.\",\"code\":\"INVALID_BOOTSTRAP_TOKEN\"}"
+  },
+  {
+    "category": "Security",
+    "test": "Block Untrusted Origin on Session Handshake (403)",
+    "passed": true,
+    "actualResult": "HTTP Status 403: Forbidden: Untrusted origin \"https://evil-untrusted-site.com\".",
+    "evidence": "{\"success\":false,\"error\":\"Forbidden: Untrusted origin \\\"https://evil-untrusted-site.com\\\".\",\"code\":\"FORBIDDEN_ORIGIN\"}"
+  },
+  {
+    "category": "Security",
+    "test": "Establish Authenticated Desktop Session via Protected Proof",
+    "passed": true,
+    "actualResult": "HTTP Status 200: Session ID \"68496d5c-b2b9-4b64-9963-66c2e5a56f21\", Scoped Token (length: 64), Expires in 60m",
+    "evidence": "{\"success\":true,\"sessionId\":\"68496d5c-b2b9-4b64-9963-66c2e5a56f21\",\"expiresAt\":1793524419803}"
+  },
+  {
+    "category": "Security",
+    "test": "Replay Protection: Rejects Replayed Request Nonce (401)",
+    "passed": true,
+    "actualResult": "First request: status=200, Replayed nonce: status=401, code=REPLAY_ATTACK_DETECTED",
+    "evidence": "{\"success\":false,\"error\":\"Unauthorized: Replay attack detected. Request nonce has already been consumed.\",\"code\":\"REPLAY_ATTACK_DETECTED\"}"
   },
   {
     "category": "System Telemetry",
     "test": "Real Hardware Metrics (CPU, RAM, Uptime)",
     "passed": true,
-    "actualResult": "CPU: 27%, RAM: 87% (13.6/15.7 GB), Uptime: 8d 12h, Platform: win32",
-    "evidence": "{\"success\":true,\"cpu\":27,\"memory\":87,\"usedRamGb\":13.6,\"totalRamGb\":15.7,\"uptime\":\"8d 12h\",\"platform\":\"win32\",\"arch\":\"x64\",\"hostname\":\"Amar\"}",
+    "actualResult": "CPU: 27%, RAM: 77% (12.1/15.7 GB), Uptime: 8d 13h, Platform: win32",
+    "evidence": "{\"success\":true,\"cpu\":27,\"memory\":77,\"usedRamGb\":12.1,\"totalRamGb\":15.7,\"uptime\":\"8d 13h\",\"platform\":\"win32\",\"arch\":\"x64\",\"hostname\":\"Amar\"}",
     "limitations": "CPU percent is instantaneous single-sample load across active cores."
   },
   {
@@ -29,13 +57,6 @@
     "actualResult": "HTTP Status 403: Terminating critical system process \"explorer.exe\" is blocked for OS stability.",
     "evidence": "{\"success\":false,\"error\":\"Terminating critical system process \\\"explorer.exe\\\" is blocked for OS stability.\",\"code\":\"SECURITY_VIOLATION\"}",
     "limitations": "Protected processes include csrss, lsass, explorer, services, smss, wininit, taskmgr."
-  },
-  {
-    "category": "Security",
-    "test": "CSRF / Cross-Site Origin Header Blocking",
-    "passed": true,
-    "actualResult": "HTTP Status 403: Cross-site request blocked by security policy.",
-    "evidence": "{\"success\":false,\"error\":\"Cross-site request blocked by security policy.\",\"code\":\"FORBIDDEN_ORIGIN\"}"
   },
   {
     "category": "Security",
@@ -62,22 +83,29 @@
     "category": "Windows Automation",
     "test": "Safe Stdin Clipboard Write & Readback",
     "passed": true,
-    "actualResult": "Written: \"SUSI_E2E_VERIFICATION_TOKEN_1793519410561\", Readback: \"SUSI_E2E_VERIFICATION_TOKEN_1793519410561\"",
-    "evidence": "{\"writeData\":{\"success\":true,\"message\":\"Text safely copied to Windows clipboard.\"},\"readData\":{\"success\":true,\"content\":\"SUSI_E2E_VERIFICATION_TOKEN_1793519410561\",\"message\":\"Clipboard content: \\\"SUSI_E2E_VERIFICATION_TOKEN_1793519410561\\\"\"}}"
+    "actualResult": "Written: \"SUSI_E2E_VERIFICATION_TOKEN_1793520819905\", Readback: \"SUSI_E2E_VERIFICATION_TOKEN_1793520819905\"",
+    "evidence": "{\"writeData\":{\"success\":true,\"message\":\"Text safely copied to Windows clipboard.\"},\"readData\":{\"success\":true,\"content\":\"SUSI_E2E_VERIFICATION_TOKEN_1793520819905\",\"message\":\"Clipboard content: \\\"SUSI_E2E_VERIFICATION_TOKEN_1793520819905\\\"\"}}"
   },
   {
     "category": "Windows Automation",
-    "test": "Launch Allowed App (Notepad) & Terminate Safely",
+    "test": "Native Spawn of Notepad & Verify OS Running State",
     "passed": true,
-    "actualResult": "Launch result: \"Application \"notepad\" launched via verified desktop launcher.\", Close result: \"Application \"notepad\" (notepad.exe) successfully terminated.\"",
-    "evidence": "{\"launchData\":{\"success\":true,\"message\":\"Application \\\"notepad\\\" launched via verified desktop launcher.\",\"appName\":\"notepad\",\"targetBinary\":\"notepad.exe\"},\"closeData\":{\"success\":true,\"message\":\"Application \\\"notepad\\\" (notepad.exe) successfully terminated.\",\"appName\":\"notepad\",\"processName\":\"notepad.exe\"}}"
+    "actualResult": "Launch status: true, Confirmed active in Windows tasklist: true",
+    "evidence": "{\"launchData\":{\"success\":true,\"message\":\"Application \\\"notepad\\\" launched via verified desktop launcher.\",\"appName\":\"notepad\",\"targetBinary\":\"notepad.exe\"},\"isRunningInTasklist\":true}"
   },
   {
     "category": "Windows Automation",
-    "test": "Reject Close on Non-Existent Process",
+    "test": "Native Terminate of Notepad & Verify OS Process Gone",
     "passed": true,
-    "actualResult": "HTTP Status 404: success=false, code=PROCESS_NOT_FOUND, error=\"Process \"nonexistent_ghost_proc_1793519413184.exe\" could not be terminated (exit code 128). It may not be currently running.\"",
-    "evidence": "{\"success\":false,\"error\":\"Process \\\"nonexistent_ghost_proc_1793519413184.exe\\\" could not be terminated (exit code 128). It may not be currently running.\",\"code\":\"PROCESS_NOT_FOUND\"}",
+    "actualResult": "Close response: \"Application \"notepad\" (notepad.exe) successfully terminated.\", Confirmed completely removed from Windows tasklist: true",
+    "evidence": "{\"closeData\":{\"success\":true,\"message\":\"Application \\\"notepad\\\" (notepad.exe) successfully terminated.\",\"appName\":\"notepad\",\"processName\":\"notepad.exe\"},\"isStillRunning\":false}"
+  },
+  {
+    "category": "Windows Automation",
+    "test": "Reject Close on Non-Existent Process (404)",
+    "passed": true,
+    "actualResult": "HTTP Status 404: success=false, code=PROCESS_NOT_FOUND, error=\"Process \"ghost_proc_not_running_1793520823883.exe\" could not be terminated (exit code 128). It may not be currently running.\"",
+    "evidence": "{\"success\":false,\"error\":\"Process \\\"ghost_proc_not_running_1793520823883.exe\\\" could not be terminated (exit code 128). It may not be currently running.\",\"code\":\"PROCESS_NOT_FOUND\"}",
     "limitations": "taskkill exit status is verified: non-zero return codes reject with PROCESS_NOT_FOUND."
   },
   {
@@ -88,18 +116,25 @@
     "evidence": "{\"volData\":{\"success\":true,\"message\":\"Volume action \\\"up\\\" applied.\",\"action\":\"up\"},\"mediaData\":{\"success\":true,\"message\":\"Media playback action \\\"play_pause\\\" dispatched.\",\"action\":\"play_pause\"}}"
   },
   {
+    "category": "Windows Automation",
+    "test": "Launch Chrome & Open YouTube URL",
+    "passed": true,
+    "actualResult": "Opened URL result: \"Opened URL \"https://youtube.com/\".\"",
+    "evidence": "{\"success\":true,\"message\":\"Opened URL \\\"https://youtube.com/\\\".\",\"url\":\"https://youtube.com/\"}"
+  },
+  {
     "category": "Action Pipeline",
     "test": "Idempotent Deduplication of Double Triggers",
     "passed": true,
     "actualResult": "Trigger 1: success=true, Trigger 2 (immediate): isDuplicate=true, message=\"Action NAVIGATE_TAB already completed recently (deduplicated).\"",
-    "evidence": "{\"trigger1\":{\"success\":true,\"actionId\":\"act_1793519413517_7xowo4\",\"message\":\"Navigated to e2e_test_tab view.\",\"status\":\"completed\",\"result\":{\"tab\":\"e2e_test_tab\"}},\"trigger2\":{\"success\":true,\"actionId\":\"act_1793519413517_7xowo4\",\"message\":\"Action NAVIGATE_TAB already completed recently (deduplicated).\",\"status\":\"completed\",\"isDuplicate\":true}}"
+    "evidence": "{\"trigger1\":{\"success\":true,\"actionId\":\"act_1793520824209_w7cb9r\",\"message\":\"Navigated to e2e_hardened_tab view.\",\"status\":\"completed\",\"result\":{\"tab\":\"e2e_hardened_tab\"}},\"trigger2\":{\"success\":true,\"actionId\":\"act_1793520824209_w7cb9r\",\"message\":\"Action NAVIGATE_TAB already completed recently (deduplicated).\",\"status\":\"completed\",\"isDuplicate\":true}}"
   },
   {
     "category": "Task Orchestrator",
     "test": "Multi-Step Execution DAG with Dependencies",
     "passed": true,
-    "actualResult": "Task 1: \"OPEN_APP: chrome\", Task 2: \"OPEN_URL:\" (dependsOn: [\"otask_1793519413518_0_awxf\"])",
-    "evidence": "[{\"id\":\"otask_1793519413518_0_awxf\",\"title\":\"OPEN_APP: chrome\"},{\"id\":\"otask_1793519413519_1_m90x\",\"title\":\"OPEN_URL:\",\"dependsOn\":[\"otask_1793519413518_0_awxf\"]}]"
+    "actualResult": "Task 1: \"OPEN_APP: chrome\", Task 2: \"OPEN_URL:\" (dependsOn: [\"otask_1793520824211_0_bspo\"])",
+    "evidence": "[{\"id\":\"otask_1793520824211_0_bspo\",\"title\":\"OPEN_APP: chrome\"},{\"id\":\"otask_1793520824212_1_2ogu\",\"title\":\"OPEN_URL:\",\"dependsOn\":[\"otask_1793520824211_0_bspo\"]}]"
   },
   {
     "category": "Task Orchestrator",
@@ -119,7 +154,7 @@
     "category": "Persistence",
     "test": "Database Query Fallback without Crash",
     "passed": true,
-    "actualResult": "Retrieved 8 tasks, created new task \"E2E Verified Offline Task\" (ID: task-1793519413522)",
-    "evidence": "{\"taskCount\":8,\"newTaskId\":\"task-1793519413522\"}"
+    "actualResult": "Retrieved 8 tasks, created new task \"E2E Verified Offline Task\" (ID: task-1793520824213)",
+    "evidence": "{\"taskCount\":8,\"newTaskId\":\"task-1793520824213\"}"
   }
 ]

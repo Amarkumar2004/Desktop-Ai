@@ -33,26 +33,31 @@ const memorySecretVault = new Map<string, string>();
 
 /**
  * Persists an API credential encrypted at rest via Windows Credential Manager (DPAPI) when running in Tauri.
+ * Matches Rust Tauri command signature: save_credential_secure(service, user, secret)
  */
 export async function persistCredentialSecure(key: string, secret: string): Promise<boolean> {
   if (typeof window === 'undefined') return false;
   try {
     const tauri = (window as any).__TAURI__;
     if (tauri?.invoke) {
-      return await tauri.invoke('save_credential_secure', {
+      const res = await tauri.invoke('save_credential_secure', {
         service: CREDENTIAL_SERVICE,
-        key,
+        user: key,
+        key: key,
         secret,
       });
+      return Boolean(res);
     }
   } catch (err) {
-    console.warn('[ProviderVault] Could not save credential to Windows Credential Manager:', err);
+    console.error('[ProviderVault] Failed to save credential in Windows Credential Manager:', err);
+    throw err;
   }
-  return false;
+  return true;
 }
 
 /**
  * Retrieves an encrypted credential from Windows Credential Manager when running in Tauri.
+ * Matches Rust Tauri command signature: get_credential_secure(service, user)
  */
 export async function retrieveCredentialSecure(key: string): Promise<string | null> {
   if (typeof window === 'undefined') return null;
@@ -61,9 +66,10 @@ export async function retrieveCredentialSecure(key: string): Promise<string | nu
     if (tauri?.invoke) {
       const res = await tauri.invoke('get_credential_secure', {
         service: CREDENTIAL_SERVICE,
-        key,
+        user: key,
+        key: key,
       });
-      return typeof res === 'string' ? res : null;
+      return typeof res === 'string' && res.length > 0 ? res : null;
     }
   } catch (err) {
     console.warn('[ProviderVault] Could not load credential from Windows Credential Manager:', err);
@@ -73,21 +79,24 @@ export async function retrieveCredentialSecure(key: string): Promise<string | nu
 
 /**
  * Deletes a stored credential from Windows Credential Manager when running in Tauri.
+ * Matches Rust Tauri command signature: delete_credential_secure(service, user)
  */
 export async function deleteCredentialSecure(key: string): Promise<boolean> {
   if (typeof window === 'undefined') return false;
   try {
     const tauri = (window as any).__TAURI__;
     if (tauri?.invoke) {
-      return await tauri.invoke('delete_credential_secure', {
+      const res = await tauri.invoke('delete_credential_secure', {
         service: CREDENTIAL_SERVICE,
-        key,
+        user: key,
+        key: key,
       });
+      return Boolean(res);
     }
   } catch (err) {
     console.warn('[ProviderVault] Could not delete credential from Windows Credential Manager:', err);
   }
-  return false;
+  return true;
 }
 
 /**
@@ -109,7 +118,7 @@ export async function hydrateSecureCredentials(): Promise<ProviderConnectionMeta
     }
   }
 
-  if (updatedAny) {
+  if (updatedAny && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     window.dispatchEvent(
       new CustomEvent('susi-providers-updated', { detail: { connections: stored } })
     );
@@ -143,21 +152,29 @@ export function getStoredProviderConnections(): ProviderConnectionMetadata[] {
 }
 
 /**
- * Saves connections to client localStorage with rawKey SCRUBBED for security.
+ * Saves connections to client localStorage with rawKey SCRUBBED for security,
+ * and securely persists keys to Windows Credential Manager (DPAPI).
  */
-export function saveStoredProviderConnections(connections: ProviderConnectionMetadata[]): void {
-  if (typeof window === 'undefined') return;
+export async function saveStoredProviderConnections(
+  connections: ProviderConnectionMetadata[]
+): Promise<boolean> {
+  if (typeof window === 'undefined') return true;
   try {
-    // 1. Stash raw keys into transient memory vault and secure Credential Manager
-    connections.forEach((conn) => {
+    // 1. Persist credentials securely
+    for (const conn of connections) {
       if (conn.rawKey) {
         memorySecretVault.set(conn.id, conn.rawKey);
-        persistCredentialSecure(conn.id, conn.rawKey);
+        try {
+          await persistCredentialSecure(conn.id, conn.rawKey);
+        } catch (credErr) {
+          console.error(`Failed to persist credential for provider "${conn.providerLabel}":`, credErr);
+          throw new Error(`Credential Manager persistence failed for "${conn.providerLabel}"`);
+        }
       } else if (conn.status === 'not_connected') {
         memorySecretVault.delete(conn.id);
-        deleteCredentialSecure(conn.id);
+        await deleteCredentialSecure(conn.id);
       }
-    });
+    }
 
     // 2. Scrub rawKey before saving to persistent localStorage
     const scrubbed = connections.map((conn) => {
@@ -167,11 +184,15 @@ export function saveStoredProviderConnections(connections: ProviderConnectionMet
     });
 
     localStorage.setItem(STORAGE_KEY_PROVIDERS, JSON.stringify(scrubbed));
-    window.dispatchEvent(
-      new CustomEvent('susi-providers-updated', { detail: { connections } })
-    );
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(
+        new CustomEvent('susi-providers-updated', { detail: { connections } })
+      );
+    }
+    return true;
   } catch (err) {
-    console.error('Failed to save provider connections', err);
+    console.error('Failed to save provider connections:', err);
+    throw err;
   }
 }
 

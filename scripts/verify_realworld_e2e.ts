@@ -9,9 +9,11 @@ import {
   saveStoredProviderConnections,
   STORAGE_KEY_PROVIDERS,
 } from '../src/lib/ai/providerVault';
+import { getBootstrapToken } from '../src/lib/security/desktopAuth';
 import { getTasks, createTask } from '../src/backend/services/taskService';
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 
 const API_BASE = 'http://localhost:3000';
 
@@ -57,56 +59,160 @@ async function main() {
   console.log('================================================================\n');
 
   // ---------------------------------------------------------------------------
-  // 1. SECURITY — UNAUTHORIZED ENDPOINT ACCESS (No Auth Token)
+  // 1. SECURITY — GET /api/internal/session REJECTION (No Secret Leakage)
   // ---------------------------------------------------------------------------
-  await runTest('Security', 'Block Unauthorized Local Access (Missing Token)', async () => {
-    const res = await fetch(`${API_BASE}/api/local/action`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ actionType: 'SYSTEM_INFO', payload: {} }),
-    });
+  await runTest('Security', 'Reject Unauthenticated GET on Session Endpoint (405)', async () => {
+    const res = await fetch(`${API_BASE}/api/internal/session`, { method: 'GET' });
     const data = await res.json();
-    const passed = res.status === 401 && data.code === 'UNAUTHORIZED_ACCESS' && data.success === false;
+    const passed = res.status === 405 && data.success === false && data.code === 'METHOD_NOT_ALLOWED' && data.token === undefined;
 
     return {
       passed,
       actualResult: `HTTP Status ${res.status}: ${data.error}`,
       evidence: JSON.stringify(data),
-      limitations: 'Unauthorized local callers lacking SUSI desktop auth session are strictly blocked.',
+      limitations: 'GET requests are strictly prohibited to prevent arbitrary secret snooping.',
     };
   });
 
   // ---------------------------------------------------------------------------
-  // 2. SECURITY — DESKTOP AUTH HANDSHAKE & AUTHORIZED ACCESS
+  // 2. SECURITY — POST /api/internal/session WITHOUT BOOTSTRAP PROOF
   // ---------------------------------------------------------------------------
-  let desktopToken = '';
-  await runTest('Security', 'Desktop Auth Session Handshake & Token Acquisition', async () => {
-    const sessionRes = await fetch(`${API_BASE}/api/internal/session`);
-    const sessionData = await sessionRes.json();
-    const passed = sessionRes.status === 200 && sessionData.success === true && typeof sessionData.token === 'string';
+  await runTest('Security', 'Reject Session Request Without Bootstrap Token (401)', async () => {
+    const res = await fetch(`${API_BASE}/api/internal/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json();
+    const passed = res.status === 401 && data.code === 'MISSING_BOOTSTRAP_TOKEN' && data.success === false;
+
+    return {
+      passed,
+      actualResult: `HTTP Status ${res.status}: ${data.error}`,
+      evidence: JSON.stringify(data),
+    };
+  });
+
+  // ---------------------------------------------------------------------------
+  // 3. SECURITY — POST /api/internal/session WITH FAKE BOOTSTRAP PROOF
+  // ---------------------------------------------------------------------------
+  await runTest('Security', 'Reject Session Request With Forged Bootstrap Token (401)', async () => {
+    const res = await fetch(`${API_BASE}/api/internal/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bootstrapToken: 'forged_fake_token_attacker_attempt_999' }),
+    });
+    const data = await res.json();
+    const passed = res.status === 401 && data.code === 'INVALID_BOOTSTRAP_TOKEN' && data.success === false;
+
+    return {
+      passed,
+      actualResult: `HTTP Status ${res.status}: ${data.error}`,
+      evidence: JSON.stringify(data),
+    };
+  });
+
+  // ---------------------------------------------------------------------------
+  // 4. SECURITY — POST /api/internal/session CROSS-ORIGIN BLOCKING
+  // ---------------------------------------------------------------------------
+  await runTest('Security', 'Block Untrusted Origin on Session Handshake (403)', async () => {
+    const bootstrapToken = getBootstrapToken();
+    const res = await fetch(`${API_BASE}/api/internal/session`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': 'https://evil-untrusted-site.com',
+      },
+      body: JSON.stringify({ bootstrapToken }),
+    });
+    const data = await res.json();
+    const passed = res.status === 403 && data.code === 'FORBIDDEN_ORIGIN' && data.success === false;
+
+    return {
+      passed,
+      actualResult: `HTTP Status ${res.status}: ${data.error}`,
+      evidence: JSON.stringify(data),
+    };
+  });
+
+  // ---------------------------------------------------------------------------
+  // 5. SECURITY — AUTHENTICATED SESSION ACQUISITION
+  // ---------------------------------------------------------------------------
+  let desktopSessionToken = '';
+  await runTest('Security', 'Establish Authenticated Desktop Session via Protected Proof', async () => {
+    const bootstrapToken = getBootstrapToken();
+    const res = await fetch(`${API_BASE}/api/internal/session`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': 'http://localhost:3000',
+      },
+      body: JSON.stringify({ bootstrapToken }),
+    });
+    const data = await res.json();
+    const passed =
+      res.status === 200 &&
+      data.success === true &&
+      typeof data.token === 'string' &&
+      data.token.length === 64 &&
+      data.token !== bootstrapToken; // Verify master bootstrap secret is NOT returned
+
     if (passed) {
-      desktopToken = sessionData.token;
+      desktopSessionToken = data.token;
     }
 
     return {
       passed,
-      actualResult: `HTTP Status ${sessionRes.status}: Received 256-bit cryptographically signed session token`,
-      evidence: JSON.stringify({ success: sessionData.success, tokenLength: desktopToken.length }),
+      actualResult: `HTTP Status ${res.status}: Session ID "${data.sessionId}", Scoped Token (length: ${data.token?.length}), Expires in ${Math.round((data.expiresAt - Date.now()) / 60000)}m`,
+      evidence: JSON.stringify({ success: data.success, sessionId: data.sessionId, expiresAt: data.expiresAt }),
     };
   });
 
-  const authHeaders = {
+  const makeAuthHeaders = (nonce = `nonce_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`) => ({
     'Content-Type': 'application/json',
-    'x-susi-desktop-auth': desktopToken,
-  };
+    'x-susi-desktop-auth': desktopSessionToken,
+    'x-susi-timestamp': Date.now().toString(),
+    'x-susi-nonce': nonce,
+  });
 
   // ---------------------------------------------------------------------------
-  // 3. LIVE SYSTEM TELEMETRY VERIFICATION (No Mock Data)
+  // 6. SECURITY — REPLAY ATTACK DETECTION
+  // ---------------------------------------------------------------------------
+  await runTest('Security', 'Replay Protection: Rejects Replayed Request Nonce (401)', async () => {
+    const reusedNonce = `replay_test_nonce_${Date.now()}`;
+    const headers = makeAuthHeaders(reusedNonce);
+
+    // First request with nonce
+    const firstRes = await fetch(`${API_BASE}/api/local/action`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ actionType: 'SYSTEM_INFO', payload: {} }),
+    });
+    const firstData = await firstRes.json();
+
+    // Replay identical nonce
+    const replayRes = await fetch(`${API_BASE}/api/local/action`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ actionType: 'SYSTEM_INFO', payload: {} }),
+    });
+    const replayData = await replayRes.json();
+    const passed = firstData.success === true && replayRes.status === 401 && replayData.code === 'REPLAY_ATTACK_DETECTED';
+
+    return {
+      passed,
+      actualResult: `First request: status=${firstRes.status}, Replayed nonce: status=${replayRes.status}, code=${replayData.code}`,
+      evidence: JSON.stringify(replayData),
+    };
+  });
+
+  // ---------------------------------------------------------------------------
+  // 7. LIVE SYSTEM TELEMETRY (No Mock Data)
   // ---------------------------------------------------------------------------
   await runTest('System Telemetry', 'Real Hardware Metrics (CPU, RAM, Uptime)', async () => {
     const res = await fetch(`${API_BASE}/api/local/action`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: makeAuthHeaders(),
       body: JSON.stringify({ actionType: 'SYSTEM_INFO', payload: {} }),
     });
     const data = await res.json();
@@ -128,12 +234,12 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 4. SECURITY — CRITICAL PROCESS TERMINATION PROTECTION
+  // 8. SECURITY — CRITICAL PROCESS TERMINATION PROTECTION
   // ---------------------------------------------------------------------------
   await runTest('Security', 'Critical Process Kill Protection (explorer.exe & csrss.exe)', async () => {
     const res = await fetch(`${API_BASE}/api/local/action`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: makeAuthHeaders(),
       body: JSON.stringify({ actionType: 'CLOSE_APP', payload: { appName: 'explorer.exe' } }),
     });
     const data = await res.json();
@@ -148,35 +254,12 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 5. SECURITY — CSRF & CROSS-SITE ORIGIN VALIDATION
-  // ---------------------------------------------------------------------------
-  await runTest('Security', 'CSRF / Cross-Site Origin Header Blocking', async () => {
-    const res = await fetch(`${API_BASE}/api/local/action`, {
-      method: 'POST',
-      headers: {
-        ...authHeaders,
-        'Sec-Fetch-Site': 'cross-site',
-        'Origin': 'https://evil-unauthorized-website.com',
-      },
-      body: JSON.stringify({ actionType: 'SYSTEM_INFO', payload: {} }),
-    });
-    const data = await res.json();
-    const passed = res.status === 403 && data.code === 'FORBIDDEN_ORIGIN' && data.success === false;
-
-    return {
-      passed,
-      actualResult: `HTTP Status ${res.status}: ${data.error}`,
-      evidence: JSON.stringify(data),
-    };
-  });
-
-  // ---------------------------------------------------------------------------
-  // 6. SECURITY — PATH TRAVERSAL TO WINDOWS SYSTEM FOLDERS
+  // 9. SECURITY — PATH TRAVERSAL TO WINDOWS SYSTEM FOLDERS
   // ---------------------------------------------------------------------------
   await runTest('Security', 'Path Traversal Prevention (C:\\Windows\\System32\\cmd.exe)', async () => {
     const res = await fetch(`${API_BASE}/api/local/action`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: makeAuthHeaders(),
       body: JSON.stringify({ actionType: 'GET_FILE_INFO', payload: { path: 'C:\\Windows\\System32\\cmd.exe' } }),
     });
     const data = await res.json();
@@ -190,12 +273,12 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 7. SECURITY — INVALID URL & SSRF PROTOCOL BLOCKING
+  // 10. SECURITY — INVALID URL & SSRF PROTOCOL BLOCKING
   // ---------------------------------------------------------------------------
   await runTest('Security', 'Disallow Dangerous URL Protocols (javascript: / file:)', async () => {
     const res = await fetch(`${API_BASE}/api/local/action`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: makeAuthHeaders(),
       body: JSON.stringify({ actionType: 'OPEN_URL', payload: { url: 'javascript:alert(document.cookie)' } }),
     });
     const data = await res.json();
@@ -209,12 +292,12 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 8. SECURITY — STRICT ZOD VALIDATION & INVALID PAYLOAD REJECTION
+  // 11. SECURITY — STRICT ZOD VALIDATION & INVALID PAYLOAD REJECTION
   // ---------------------------------------------------------------------------
   await runTest('Security', 'Strict Zod Rejection of Unknown Action Type', async () => {
     const res = await fetch(`${API_BASE}/api/local/action`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: makeAuthHeaders(),
       body: JSON.stringify({ actionType: 'FORMAT_HARD_DRIVE_NOW', payload: {} }),
     });
     const data = await res.json();
@@ -228,7 +311,7 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 9. REAL WINDOWS CLIPBOARD READ / WRITE (Zero Command Injection)
+  // 12. REAL WINDOWS CLIPBOARD READ / WRITE (Zero Command Injection)
   // ---------------------------------------------------------------------------
   await runTest('Windows Automation', 'Safe Stdin Clipboard Write & Readback', async () => {
     const testSecret = `SUSI_E2E_VERIFICATION_TOKEN_${Date.now()}`;
@@ -236,7 +319,7 @@ async function main() {
     // Write to clipboard
     const writeRes = await fetch(`${API_BASE}/api/local/action`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: makeAuthHeaders(),
       body: JSON.stringify({ actionType: 'CLIPBOARD_ACTION', payload: { action: 'write', text: testSecret } }),
     });
     const writeData = await writeRes.json();
@@ -244,7 +327,7 @@ async function main() {
     // Read back from clipboard
     const readRes = await fetch(`${API_BASE}/api/local/action`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: makeAuthHeaders(),
       body: JSON.stringify({ actionType: 'CLIPBOARD_ACTION', payload: { action: 'read' } }),
     });
     const readData = await readRes.json();
@@ -258,13 +341,12 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 10. REAL WINDOWS APPLICATION SPAWN & TERMINATION (Notepad)
+  // 13. REAL WINDOWS APPLICATION SPAWN & OS PROCESS VERIFICATION (Notepad)
   // ---------------------------------------------------------------------------
-  await runTest('Windows Automation', 'Launch Allowed App (Notepad) & Terminate Safely', async () => {
-    // 1. Launch notepad
+  await runTest('Windows Automation', 'Native Spawn of Notepad & Verify OS Running State', async () => {
     const launchRes = await fetch(`${API_BASE}/api/local/action`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: makeAuthHeaders(),
       body: JSON.stringify({ actionType: 'OPEN_APP', payload: { appName: 'notepad' } }),
     });
     const launchData = await launchRes.json();
@@ -272,34 +354,63 @@ async function main() {
     // Short delay to let OS spawn
     await new Promise((r) => setTimeout(r, 1200));
 
-    // 2. Terminate notepad
-    const closeRes = await fetch(`${API_BASE}/api/local/action`, {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify({ actionType: 'CLOSE_APP', payload: { appName: 'notepad' } }),
-    });
-    const closeData = await closeRes.json();
-    const passed = launchData.success === true && closeData.success === true;
+    // Verify Notepad is actually running via Windows tasklist
+    let isRunningInTasklist = false;
+    try {
+      const tasklistOutput = execSync('tasklist /FI "IMAGENAME eq notepad.exe" /NH').toString();
+      isRunningInTasklist = tasklistOutput.toLowerCase().includes('notepad.exe');
+    } catch {}
+
+    const passed = launchData.success === true && isRunningInTasklist;
 
     return {
       passed,
-      actualResult: `Launch result: "${launchData.message}", Close result: "${closeData.message}"`,
-      evidence: JSON.stringify({ launchData, closeData }),
+      actualResult: `Launch status: ${launchData.success}, Confirmed active in Windows tasklist: ${isRunningInTasklist}`,
+      evidence: JSON.stringify({ launchData, isRunningInTasklist }),
     };
   });
 
   // ---------------------------------------------------------------------------
-  // 11. PROCESS TERMINATION VERIFICATION (Never Report Success for Non-Existent Process)
+  // 14. REAL WINDOWS APPLICATION TERMINATION & OS PROCESS VERIFICATION (Notepad)
   // ---------------------------------------------------------------------------
-  await runTest('Windows Automation', 'Reject Close on Non-Existent Process', async () => {
-    const bogusProcess = `nonexistent_ghost_proc_${Date.now()}`;
+  await runTest('Windows Automation', 'Native Terminate of Notepad & Verify OS Process Gone', async () => {
     const closeRes = await fetch(`${API_BASE}/api/local/action`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: makeAuthHeaders(),
+      body: JSON.stringify({ actionType: 'CLOSE_APP', payload: { appName: 'notepad' } }),
+    });
+    const closeData = await closeRes.json();
+
+    await new Promise((r) => setTimeout(r, 1000));
+
+    // Verify Notepad is no longer in tasklist
+    let isStillRunning = false;
+    try {
+      const tasklistOutput = execSync('tasklist /FI "IMAGENAME eq notepad.exe" /NH').toString();
+      isStillRunning = tasklistOutput.toLowerCase().includes('notepad.exe');
+    } catch {}
+
+    const passed = closeData.success === true && !isStillRunning;
+
+    return {
+      passed,
+      actualResult: `Close response: "${closeData.message}", Confirmed completely removed from Windows tasklist: ${!isStillRunning}`,
+      evidence: JSON.stringify({ closeData, isStillRunning }),
+    };
+  });
+
+  // ---------------------------------------------------------------------------
+  // 15. REJECT CLOSE ON NON-EXISTENT PROCESS (Never Report False Success)
+  // ---------------------------------------------------------------------------
+  await runTest('Windows Automation', 'Reject Close on Non-Existent Process (404)', async () => {
+    const bogusProcess = `ghost_proc_not_running_${Date.now()}`;
+    const closeRes = await fetch(`${API_BASE}/api/local/action`, {
+      method: 'POST',
+      headers: makeAuthHeaders(),
       body: JSON.stringify({ actionType: 'CLOSE_APP', payload: { appName: bogusProcess } }),
     });
     const closeData = await closeRes.json();
-    const passed = resStatusOr(closeRes.status, 404) && closeData.success === false && closeData.code === 'PROCESS_NOT_FOUND';
+    const passed = closeRes.status === 404 && closeData.success === false && closeData.code === 'PROCESS_NOT_FOUND';
 
     return {
       passed,
@@ -310,19 +421,19 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 12. WINDOWS VOLUME & MEDIA CONTROL
+  // 16. WINDOWS VOLUME & MEDIA CONTROL
   // ---------------------------------------------------------------------------
   await runTest('Windows Automation', 'Volume Adjustment & Media Playback Control', async () => {
     const volRes = await fetch(`${API_BASE}/api/local/action`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: makeAuthHeaders(),
       body: JSON.stringify({ actionType: 'VOLUME_CONTROL', payload: { action: 'up' } }),
     });
     const volData = await volRes.json();
 
     const mediaRes = await fetch(`${API_BASE}/api/local/action`, {
       method: 'POST',
-      headers: authHeaders,
+      headers: makeAuthHeaders(),
       body: JSON.stringify({ actionType: 'MEDIA_CONTROL', payload: { action: 'play_pause' } }),
     });
     const mediaData = await mediaRes.json();
@@ -336,19 +447,37 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 13. ACTION PIPELINE DEDUPLICATION (Exactly-Once Execution)
+  // 17. REAL CHROME LAUNCH & YOUTUBE URL NAVIGATION
+  // ---------------------------------------------------------------------------
+  await runTest('Windows Automation', 'Launch Chrome & Open YouTube URL', async () => {
+    const urlRes = await fetch(`${API_BASE}/api/local/action`, {
+      method: 'POST',
+      headers: makeAuthHeaders(),
+      body: JSON.stringify({ actionType: 'OPEN_URL', payload: { url: 'https://youtube.com' } }),
+    });
+    const urlData = await urlRes.json();
+    const passed = urlData.success === true && urlData.url === 'https://youtube.com/';
+
+    return {
+      passed,
+      actualResult: `Opened URL result: "${urlData.message}"`,
+      evidence: JSON.stringify(urlData),
+    };
+  });
+
+  // ---------------------------------------------------------------------------
+  // 18. ACTION PIPELINE DEDUPLICATION (Exactly-Once Execution)
   // ---------------------------------------------------------------------------
   await runTest('Action Pipeline', 'Idempotent Deduplication of Double Triggers', async () => {
     ActionPipeline.clearCompleted();
     const trigger1 = await ActionPipeline.dispatch({
       type: 'NAVIGATE_TAB',
-      payload: { tab: 'e2e_test_tab' },
+      payload: { tab: 'e2e_hardened_tab' },
     });
 
-    // Immediate duplicate trigger with identical type and payload
     const trigger2 = await ActionPipeline.dispatch({
       type: 'NAVIGATE_TAB',
-      payload: { tab: 'e2e_test_tab' },
+      payload: { tab: 'e2e_hardened_tab' },
     });
 
     const passed = trigger1.success === true && trigger2.isDuplicate === true;
@@ -361,7 +490,7 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 14. MULTI-STEP TASK ORCHESTRATION & DEPENDENCIES
+  // 19. MULTI-STEP TASK ORCHESTRATION & DEPENDENCIES
   // ---------------------------------------------------------------------------
   await runTest('Task Orchestrator', 'Multi-Step Execution DAG with Dependencies', async () => {
     const orchestrator = new TaskOrchestrator();
@@ -381,7 +510,7 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 15. TASK CANCELLATION PROPAGATION
+  // 20. TASK CANCELLATION PROPAGATION
   // ---------------------------------------------------------------------------
   await runTest('Task Orchestrator', 'Cascading Cancellation of Dependent Tasks', async () => {
     const orchestrator = new TaskOrchestrator();
@@ -405,7 +534,7 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 16. SECRET VAULT SECURITY (Plaintext Keys Never in LocalStorage)
+  // 21. SECRET VAULT SECURITY (Plaintext Keys Never in LocalStorage)
   // ---------------------------------------------------------------------------
   await runTest('Security', 'Plaintext API Keys Scrubbed from Persistent Storage', async () => {
     const mockConnection: any = {
@@ -422,7 +551,7 @@ async function main() {
       createdAt: new Date().toISOString(),
     };
 
-    saveStoredProviderConnections([mockConnection]);
+    await saveStoredProviderConnections([mockConnection]);
 
     const rawSaved = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY_PROVIDERS) : null;
     const containsPlaintextSecret = rawSaved ? rawSaved.includes('sk-proj-SUPER_SECRET_PLAINTEXT_KEY_NEVER_SAVE') : false;
@@ -436,7 +565,7 @@ async function main() {
   });
 
   // ---------------------------------------------------------------------------
-  // 17. SUPABASE / OFFLINE DATABASE FALLBACK
+  // 22. SUPABASE / OFFLINE DATABASE FALLBACK
   // ---------------------------------------------------------------------------
   await runTest('Persistence', 'Database Query Fallback without Crash', async () => {
     const tasks = await getTasks();
@@ -460,16 +589,11 @@ async function main() {
   console.log(`TOTAL TESTS: ${results.length} | PASSED: ${results.filter((r) => r.passed).length} | FAILED: ${results.filter((r) => !r.passed).length}`);
   console.log('================================================================\n');
 
-  // Output JSON for the report
   fs.writeFileSync(
     path.join(__dirname, 'e2e_verification_report.json'),
     JSON.stringify(results, null, 2),
     'utf8'
   );
-}
-
-function resStatusOr(status: number, expected: number): boolean {
-  return status === expected;
 }
 
 main().catch(console.error);

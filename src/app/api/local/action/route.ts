@@ -241,7 +241,7 @@ export async function POST(req: NextRequest) {
       },
     });
     return NextResponse.json(
-      { success: false, error: auth.reason, code: 'UNAUTHORIZED_ACCESS' },
+      { success: false, error: auth.reason, code: auth.code || 'UNAUTHORIZED_ACCESS' },
       { status: 401 }
     );
   }

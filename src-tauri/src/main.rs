@@ -8,6 +8,12 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+#[cfg(target_os = "windows")]
+extern "system" {
+    fn keybd_event(b_vk: u8, b_scan: u8, dw_flags: u32, dw_extra_info: usize);
+    fn LockWorkStation() -> i32;
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct GpuMetrics {
     gpu_percent: f32,
@@ -114,22 +120,19 @@ struct AppState {
 #[tauri::command]
 fn get_system_metrics(state: tauri::State<AppState>) -> Result<SystemMetrics, String> {
     let mut sys = state.sys.lock().map_err(|e| e.to_string())?;
-    sys.refresh_cpu_specifics(CpuRefreshKind::everything());
+
+    sys.refresh_cpu();
     sys.refresh_memory();
 
-    let cpus = sys.cpus();
-    let cpu_percent = if !cpus.is_empty() {
-        let total: f32 = cpus.iter().map(|c| c.cpu_usage()).sum();
-        (total / cpus.len() as f32).clamp(0.0, 100.0)
-    } else {
-        sys.global_cpu_info().cpu_usage().clamp(0.0, 100.0)
-    };
-
+    let cpu_percent = sys.global_cpu_info().cpu_usage();
     let total_ram_bytes = sys.total_memory();
     let used_ram_bytes = sys.used_memory();
 
-    let memory_percent = if total_ram_bytes > 0 {
-        ((used_ram_bytes as f32 / total_ram_bytes as f32) * 100.0).clamp(0.0, 100.0)
+    let total_ram_gb = (total_ram_bytes as f32) / (1024.0 * 1024.0 * 1024.0);
+    let used_ram_gb = (used_ram_bytes as f32) / (1024.0 * 1024.0 * 1024.0);
+
+    let memory_percent = if total_ram_gb > 0.0 {
+        (used_ram_gb / total_ram_gb) * 100.0
     } else {
         0.0
     };
@@ -138,9 +141,8 @@ fn get_system_metrics(state: tauri::State<AppState>) -> Result<SystemMetrics, St
     let days = uptime_secs / 86400;
     let hours = (uptime_secs % 86400) / 3600;
     let mins = (uptime_secs % 3600) / 60;
-
     let uptime_str = if days > 0 {
-        format!("{}d {}h", days, hours)
+        format!("{}d {}h {}m", days, hours, mins)
     } else if hours > 0 {
         format!("{}h {}m", hours, mins)
     } else {
@@ -152,8 +154,8 @@ fn get_system_metrics(state: tauri::State<AppState>) -> Result<SystemMetrics, St
     Ok(SystemMetrics {
         cpu_percent,
         memory_percent,
-        used_ram_gb: used_ram_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
-        total_ram_gb: total_ram_bytes as f32 / 1024.0 / 1024.0 / 1024.0,
+        used_ram_gb,
+        total_ram_gb,
         uptime_str,
         gpu_percent: gpu_metrics.gpu_percent,
         vram_used_gb: gpu_metrics.vram_used_gb,
@@ -163,7 +165,6 @@ fn get_system_metrics(state: tauri::State<AppState>) -> Result<SystemMetrics, St
     })
 }
 
-/// Scans installed Windows applications from the Registry
 #[tauri::command]
 fn scan_installed_apps() -> Result<Vec<InstalledApp>, String> {
     #[cfg(target_os = "windows")]
@@ -171,26 +172,51 @@ fn scan_installed_apps() -> Result<Vec<InstalledApp>, String> {
         use winreg::enums::*;
         use winreg::RegKey;
 
-        let mut apps: Vec<InstalledApp> = Vec::new();
-        let subkeys = [
-            (HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
-            (HKEY_LOCAL_MACHINE, r"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
-            (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        let mut apps = Vec::new();
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+
+        let paths = [
+            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+            "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
         ];
 
-        for (hive, path) in subkeys {
-            let root = RegKey::predef(hive);
-            if let Ok(key) = root.open_subkey(path) {
-                for name_res in key.enum_keys().map(|x| x.unwrap_or_default()) {
-                    if let Ok(subkey) = key.open_subkey(&name_res) {
-                        let display_name: String = subkey.get_value("DisplayName").unwrap_or_default();
-                        if !display_name.trim().is_empty() {
-                            let version: Option<String> = subkey.get_value("DisplayVersion").ok();
-                            let publisher: Option<String> = subkey.get_value("Publisher").ok();
-                            let exe_path: Option<String> = subkey.get_value("DisplayIcon").ok();
+        for &path_str in &paths {
+            if let Ok(key) = hklm.open_subkey(path_str) {
+                for name in key.enum_keys().filter_map(|x| x.ok()) {
+                    if let Ok(app_key) = key.open_subkey(&name) {
+                        let display_name: Result<String, _> = app_key.get_value("DisplayName");
+                        if let Ok(name) = display_name {
+                            if !name.trim().is_empty() {
+                                let version: Option<String> = app_key.get_value("DisplayVersion").ok();
+                                let publisher: Option<String> = app_key.get_value("Publisher").ok();
+                                let exe_path: Option<String> = app_key.get_value("DisplayIcon").ok();
+
+                                apps.push(InstalledApp {
+                                    name,
+                                    version,
+                                    publisher,
+                                    exe_path,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Ok(key) = hkcu.open_subkey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall") {
+            for name in key.enum_keys().filter_map(|x| x.ok()) {
+                if let Ok(app_key) = key.open_subkey(&name) {
+                    let display_name: Result<String, _> = app_key.get_value("DisplayName");
+                    if let Ok(name) = display_name {
+                        if !name.trim().is_empty() {
+                            let version: Option<String> = app_key.get_value("DisplayVersion").ok();
+                            let publisher: Option<String> = app_key.get_value("Publisher").ok();
+                            let exe_path: Option<String> = app_key.get_value("DisplayIcon").ok();
 
                             apps.push(InstalledApp {
-                                name: display_name.trim().to_string(),
+                                name,
                                 version,
                                 publisher,
                                 exe_path,
@@ -211,18 +237,71 @@ fn scan_installed_apps() -> Result<Vec<InstalledApp>, String> {
     Ok(Vec::new())
 }
 
-/// Windows Credential Manager: Secure Storage
+/// Provides the genuine desktop bootstrap token to the Tauri webview via secure IPC
 #[tauri::command]
-fn save_credential_secure(service: String, user: String, secret: String) -> Result<bool, String> {
-    let entry = keyring::Entry::new(&service, &user).map_err(|e| e.to_string())?;
+fn get_desktop_bootstrap_token() -> Result<String, String> {
+    if let Ok(env_tok) = std::env::var("SUSI_BOOTSTRAP_SECRET") {
+        if !env_tok.is_empty() {
+            return Ok(env_tok);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            let token_path = std::path::Path::new(&local_app_data).join(".susi").join("desktop_bootstrap.token");
+            if token_path.exists() {
+                if let Ok(tok) = std::fs::read_to_string(token_path) {
+                    let trimmed = tok.trim().to_string();
+                    if !trimmed.is_empty() {
+                        return Ok(trimmed);
+                    }
+                }
+            }
+        }
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            let token_path = std::path::Path::new(&home).join(".susi").join("desktop_bootstrap.token");
+            if token_path.exists() {
+                if let Ok(tok) = std::fs::read_to_string(token_path) {
+                    let trimmed = tok.trim().to_string();
+                    if !trimmed.is_empty() {
+                        return Ok(trimmed);
+                    }
+                }
+            }
+        }
+    }
+
+    Err("Desktop bootstrap token not found in protected storage".to_string())
+}
+
+/// Windows Credential Manager: Secure Storage (Accepts both user and key for complete resilience)
+#[tauri::command]
+fn save_credential_secure(
+    service: String,
+    user: Option<String>,
+    key: Option<String>,
+    secret: String,
+) -> Result<bool, String> {
+    let target_user = user
+        .or(key)
+        .ok_or_else(|| "Missing required 'user' or 'key' parameter".to_string())?;
+    let entry = keyring::Entry::new(&service, &target_user).map_err(|e| e.to_string())?;
     entry.set_password(&secret).map_err(|e| e.to_string())?;
     Ok(true)
 }
 
 /// Windows Credential Manager: Secure Retrieval
 #[tauri::command]
-fn get_credential_secure(service: String, user: String) -> Result<Option<String>, String> {
-    let entry = keyring::Entry::new(&service, &user).map_err(|e| e.to_string())?;
+fn get_credential_secure(
+    service: String,
+    user: Option<String>,
+    key: Option<String>,
+) -> Result<Option<String>, String> {
+    let target_user = user
+        .or(key)
+        .ok_or_else(|| "Missing required 'user' or 'key' parameter".to_string())?;
+    let entry = keyring::Entry::new(&service, &target_user).map_err(|e| e.to_string())?;
     match entry.get_password() {
         Ok(p) => Ok(Some(p)),
         Err(keyring::Error::NoEntry) => Ok(None),
@@ -232,8 +311,15 @@ fn get_credential_secure(service: String, user: String) -> Result<Option<String>
 
 /// Windows Credential Manager: Secure Deletion
 #[tauri::command]
-fn delete_credential_secure(service: String, user: String) -> Result<bool, String> {
-    let entry = keyring::Entry::new(&service, &user).map_err(|e| e.to_string())?;
+fn delete_credential_secure(
+    service: String,
+    user: Option<String>,
+    key: Option<String>,
+) -> Result<bool, String> {
+    let target_user = user
+        .or(key)
+        .ok_or_else(|| "Missing required 'user' or 'key' parameter".to_string())?;
+    let entry = keyring::Entry::new(&service, &target_user).map_err(|e| e.to_string())?;
     match entry.delete_password() {
         Ok(_) => Ok(true),
         Err(keyring::Error::NoEntry) => Ok(false),
@@ -241,7 +327,7 @@ fn delete_credential_secure(service: String, user: String) -> Result<bool, Strin
     }
 }
 
-/// Executes a verified native PC action
+/// Executes a verified native PC action with ZERO shell script dependencies
 #[tauri::command]
 fn execute_pc_action(
     action_type: String,
@@ -265,7 +351,7 @@ fn execute_pc_action(
                     "chrome" | "google chrome" => "chrome.exe",
                     "notepad" => "notepad.exe",
                     "calc" | "calculator" => "calc.exe",
-                    "code" | "vscode" | "vs code" => "code",
+                    "code" | "vscode" | "vs code" => "code.cmd",
                     "paint" | "mspaint" => "mspaint.exe",
                     "edge" => "msedge.exe",
                     "settings" => "ms-settings:",
@@ -274,15 +360,24 @@ fn execute_pc_action(
                     _ => &app,
                 };
 
-                let mut cmd = std::process::Command::new("cmd.exe");
-                cmd.args(&["/c", "start", "", binary]);
-                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-                let child = cmd.spawn().map_err(|e| e.to_string())?;
+                let is_protocol = binary.contains(':') && !binary.contains('\\');
+                let child = if is_protocol {
+                    // Protocol associations launch via native explorer.exe directly (zero cmd.exe)
+                    let mut cmd = std::process::Command::new("explorer.exe");
+                    cmd.arg(binary);
+                    cmd.spawn().map_err(|e| e.to_string())?
+                } else {
+                    // Executables spawn directly via native OS CreateProcessW
+                    let mut cmd = std::process::Command::new(binary);
+                    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                    cmd.spawn().map_err(|e| e.to_string())?
+                };
+
                 let pid = child.id();
 
                 Ok(ActionResult {
                     success: true,
-                    message: format!("Successfully launched \"{}\"", app),
+                    message: format!("Successfully launched \"{}\" natively.", app),
                     result: Some(serde_json::json!({ "appName": app, "binary": binary, "pid": pid })),
                 })
             }
@@ -313,8 +408,11 @@ fn execute_pc_action(
                 app.clone()
             };
 
-            // Block critical system processes
-            let critical = ["csrss.exe", "lsass.exe", "explorer.exe", "services.exe", "smss.exe", "wininit.exe", "taskmgr.exe"];
+            // Block critical system processes from being terminated
+            let critical = [
+                "csrss.exe", "lsass.exe", "explorer.exe", "services.exe",
+                "smss.exe", "wininit.exe", "taskmgr.exe", "svchost.exe",
+            ];
             if critical.iter().any(|c| c.eq_ignore_ascii_case(&proc_name)) {
                 return Ok(ActionResult {
                     success: false,
@@ -325,22 +423,29 @@ fn execute_pc_action(
 
             #[cfg(target_os = "windows")]
             {
-                let mut cmd = std::process::Command::new("taskkill");
-                cmd.args(&["/IM", &proc_name, "/F"]);
-                cmd.creation_flags(0x08000000);
-                let output = cmd.output().map_err(|e| e.to_string())?;
+                // Native Win32 Process Termination (Zero taskkill.exe)
+                let mut sys = System::new_all();
+                sys.refresh_processes();
 
-                if output.status.success() {
+                let mut terminated_count = 0;
+                for (_pid, process) in sys.processes() {
+                    if process.name().eq_ignore_ascii_case(&proc_name) {
+                        if process.kill() {
+                            terminated_count += 1;
+                        }
+                    }
+                }
+
+                if terminated_count > 0 {
                     Ok(ActionResult {
                         success: true,
-                        message: format!("Closed application process \"{}\".", proc_name),
-                        result: Some(serde_json::json!({ "process": proc_name })),
+                        message: format!("Closed application process \"{}\" ({} instance(s) terminated) via native Win32 API.", proc_name, terminated_count),
+                        result: Some(serde_json::json!({ "process": proc_name, "terminatedCount": terminated_count })),
                     })
                 } else {
-                    let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
                     Ok(ActionResult {
                         success: false,
-                        message: if err_msg.is_empty() { format!("Process \"{}\" not found or already closed.", proc_name) } else { err_msg },
+                        message: format!("Process \"{}\" not found or already closed.", proc_name),
                         result: None,
                     })
                 }
@@ -354,6 +459,7 @@ fn execute_pc_action(
         }
         "CLIPBOARD_ACTION" => {
             let action = pl.get("action").and_then(|v| v.as_str()).unwrap_or("read").to_lowercase();
+            // Native Win32 Clipboard via arboard crate (Zero PowerShell)
             match arboard::Clipboard::new() {
                 Ok(mut clipboard) => {
                     if action == "write" {
@@ -392,14 +498,14 @@ fn execute_pc_action(
 
             #[cfg(target_os = "windows")]
             {
-                let mut cmd = std::process::Command::new("cmd.exe");
-                cmd.args(&["/c", "start", "", url]);
-                cmd.creation_flags(0x08000000);
+                // Native URL launcher via explorer.exe (Zero cmd.exe)
+                let mut cmd = std::process::Command::new("explorer.exe");
+                cmd.arg(url);
                 cmd.spawn().map_err(|e| e.to_string())?;
 
                 Ok(ActionResult {
                     success: true,
-                    message: format!("Opened URL \"{}\"", url),
+                    message: format!("Opened URL \"{}\" natively.", url),
                     result: Some(serde_json::json!({ "url": url })),
                 })
             }
@@ -414,23 +520,31 @@ fn execute_pc_action(
             let action = pl.get("action").and_then(|v| v.as_str()).unwrap_or("mute").to_lowercase();
             #[cfg(target_os = "windows")]
             {
-                let (key_char, count) = match action.as_str() {
-                    "up" | "increase" => (175, 4),
-                    "down" | "decrease" => (174, 4),
-                    _ => (173, 1),
-                };
-                let ps_cmd = format!(
-                    "1..{} | ForEach-Object {{ (New-Object -ComObject WScript.Shell).SendKeys([char]{}) }}",
-                    count, key_char
-                );
-                let mut cmd = std::process::Command::new("powershell");
-                cmd.args(&["-NoProfile", "-Command", &ps_cmd]);
-                cmd.creation_flags(0x08000000);
-                cmd.spawn().map_err(|e| e.to_string())?;
+                // Native Win32 Multimedia Keybd Event Emulation (Zero PowerShell)
+                unsafe {
+                    match action.as_str() {
+                        "up" | "increase" => {
+                            for _ in 0..4 {
+                                keybd_event(0xAF, 0, 0, 0); // VK_VOLUME_UP down
+                                keybd_event(0xAF, 0, 2, 0); // VK_VOLUME_UP up
+                            }
+                        }
+                        "down" | "decrease" => {
+                            for _ in 0..4 {
+                                keybd_event(0xAE, 0, 0, 0); // VK_VOLUME_DOWN down
+                                keybd_event(0xAE, 0, 2, 0); // VK_VOLUME_DOWN up
+                            }
+                        }
+                        _ => {
+                            keybd_event(0xAD, 0, 0, 0); // VK_VOLUME_MUTE down
+                            keybd_event(0xAD, 0, 2, 0); // VK_VOLUME_MUTE up
+                        }
+                    }
+                }
 
                 Ok(ActionResult {
                     success: true,
-                    message: format!("Volume action \"{}\" executed.", action),
+                    message: format!("Volume action \"{}\" executed natively via Win32 keybd_event.", action),
                     result: Some(serde_json::json!({ "action": action })),
                 })
             }
@@ -445,22 +559,23 @@ fn execute_pc_action(
             let action = pl.get("action").and_then(|v| v.as_str()).unwrap_or("play_pause").to_lowercase();
             #[cfg(target_os = "windows")]
             {
-                let key_char = if action.contains("next") {
-                    176
+                // Native Win32 Media Keybd Event Emulation (Zero PowerShell)
+                let vk: u8 = if action.contains("next") {
+                    0xB0 // VK_MEDIA_NEXT_TRACK
                 } else if action.contains("prev") {
-                    177
+                    0xB1 // VK_MEDIA_PREV_TRACK
                 } else {
-                    179
+                    0xB3 // VK_MEDIA_PLAY_PAUSE
                 };
-                let ps_cmd = format!("(New-Object -ComObject WScript.Shell).SendKeys([char]{})", key_char);
-                let mut cmd = std::process::Command::new("powershell");
-                cmd.args(&["-NoProfile", "-Command", &ps_cmd]);
-                cmd.creation_flags(0x08000000);
-                cmd.spawn().map_err(|e| e.to_string())?;
+
+                unsafe {
+                    keybd_event(vk, 0, 0, 0);
+                    keybd_event(vk, 0, 2, 0);
+                }
 
                 Ok(ActionResult {
                     success: true,
-                    message: format!("Media control \"{}\" dispatched.", action),
+                    message: format!("Media control \"{}\" executed natively via Win32 keybd_event.", action),
                     result: Some(serde_json::json!({ "action": action })),
                 })
             }
@@ -475,20 +590,17 @@ fn execute_pc_action(
             let action = pl.get("action").and_then(|v| v.as_str()).unwrap_or("show_desktop").to_lowercase();
             #[cfg(target_os = "windows")]
             {
-                let method = if action.contains("restore") {
-                    "UndoMinimizeAll"
-                } else {
-                    "MinimizeAll"
-                };
-                let ps_cmd = format!("(New-Object -ComObject Shell.Application).{}()", method);
-                let mut cmd = std::process::Command::new("powershell");
-                cmd.args(&["-NoProfile", "-Command", &ps_cmd]);
-                cmd.creation_flags(0x08000000);
-                cmd.spawn().map_err(|e| e.to_string())?;
+                // Native Win32 Desktop Toggle (Win + D) Emulation (Zero PowerShell)
+                unsafe {
+                    keybd_event(0x5B, 0, 0, 0); // VK_LWIN down
+                    keybd_event(0x44, 0, 0, 0); // 'D' down
+                    keybd_event(0x44, 0, 2, 0); // 'D' up
+                    keybd_event(0x5B, 0, 2, 0); // VK_LWIN up
+                }
 
                 Ok(ActionResult {
                     success: true,
-                    message: format!("Window control \"{}\" executed.", action),
+                    message: format!("Window control \"{}\" executed natively via Win32 shortcut.", action),
                     result: Some(serde_json::json!({ "action": action })),
                 })
             }
@@ -504,20 +616,21 @@ fn execute_pc_action(
             #[cfg(target_os = "windows")]
             {
                 if pwr == "lock" || act == "LOCK" {
-                    let mut cmd = std::process::Command::new("rundll32.exe");
-                    cmd.args(&["user32.dll,LockWorkStation"]);
-                    cmd.creation_flags(0x08000000);
-                    cmd.spawn().map_err(|e| e.to_string())?;
-                } else if pwr == "sleep" {
-                    let mut cmd = std::process::Command::new("rundll32.exe");
-                    cmd.args(&["powrprof.dll,SetSuspendState", "0,1,0"]);
-                    cmd.creation_flags(0x08000000);
-                    cmd.spawn().map_err(|e| e.to_string())?;
+                    // Native Win32 LockWorkStation API (Zero rundll32.exe)
+                    unsafe {
+                        LockWorkStation();
+                    }
+                } else {
+                    return Ok(ActionResult {
+                        success: false,
+                        message: format!("Power action \"{}\" is not natively supported for safety.", pwr),
+                        result: None,
+                    });
                 }
 
                 Ok(ActionResult {
                     success: true,
-                    message: format!("Power action \"{}\" executed.", pwr),
+                    message: format!("Power action \"{}\" executed natively via Win32 API.", pwr),
                     result: Some(serde_json::json!({ "action": pwr })),
                 })
             }
@@ -539,14 +652,14 @@ fn execute_pc_action(
                     "recycle" | "recycle_bin" => "shell:RecycleBinFolder",
                     _ => "shell:Downloads",
                 };
-                let mut cmd = std::process::Command::new("cmd.exe");
-                cmd.args(&["/c", "start", "", target_shell]);
-                cmd.creation_flags(0x08000000);
+
+                let mut cmd = std::process::Command::new("explorer.exe");
+                cmd.arg(target_shell);
                 cmd.spawn().map_err(|e| e.to_string())?;
 
                 Ok(ActionResult {
                     success: true,
-                    message: format!("Opened special folder \"{}\".", folder),
+                    message: format!("Opened special folder \"{}\" natively.", folder),
                     result: Some(serde_json::json!({ "folder": folder })),
                 })
             }
@@ -579,6 +692,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_system_metrics,
             scan_installed_apps,
+            get_desktop_bootstrap_token,
             execute_pc_action,
             save_credential_secure,
             get_credential_secure,
