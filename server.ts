@@ -144,6 +144,15 @@ app
       log.info(`Gateway proxy: ws://localhost:${port}/api/gateway → ${GATEWAY_URL}`);
     }
 
+    server.on("error", (err: any) => {
+      if (err.code === "EADDRINUSE") {
+        log.error(`Port ${port} is already in use. Please terminate any process on port ${port} or set PORT=<number>.`);
+      } else {
+        log.error("Server error:", err);
+      }
+      process.exit(1);
+    });
+
     server.listen(port);
   })
   .catch((err) => {
