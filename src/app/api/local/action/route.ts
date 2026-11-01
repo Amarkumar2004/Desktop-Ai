@@ -225,20 +225,42 @@ export async function POST(req: NextRequest) {
     if (actionType === 'OPEN_APP') {
       const rawApp = String(payload?.appName || payload?.target || 'chrome').trim().toLowerCase();
 
-      // Map friendly app names to official Windows launcher targets
+      // Map friendly app names to official Windows launcher targets & arguments
       let targetBinary = rawApp;
-      if (rawApp.includes('chrome') || rawApp.includes('browser')) {
+      let extraArgs = '';
+
+      if (
+        rawApp.includes('chrome') ||
+        rawApp.includes('google') ||
+        rawApp.includes('browser') ||
+        rawApp.includes('internet') ||
+        rawApp.includes('web') ||
+        rawApp === 'application' ||
+        rawApp === 'app' ||
+        rawApp === 'open application' ||
+        rawApp === 'open app'
+      ) {
         targetBinary = 'chrome.exe';
-      } else if (rawApp.includes('notepad') || rawApp.includes('editor')) {
+        extraArgs = '--new-window https://www.google.com';
+      } else if (rawApp.includes('notepad') || rawApp.includes('editor') || rawApp.includes('note') || rawApp.includes('text')) {
         targetBinary = 'notepad.exe';
-      } else if (rawApp.includes('calc') || rawApp.includes('calculator')) {
+      } else if (rawApp.includes('calc') || rawApp.includes('calculator') || rawApp.includes('hisab')) {
         targetBinary = 'calc.exe';
-      } else if (rawApp.includes('setting') || rawApp.includes('settings')) {
+      } else if (rawApp.includes('setting')) {
         targetBinary = 'ms-settings:';
-      } else if (rawApp.includes('vs code') || rawApp.includes('vscode')) {
+      } else if (rawApp.includes('vs code') || rawApp.includes('vscode') || rawApp.includes('code')) {
         targetBinary = 'code';
       } else if (rawApp.includes('explorer') || rawApp.includes('file') || rawApp.includes('folder')) {
         targetBinary = 'explorer.exe';
+      } else if (rawApp.includes('paint') || rawApp.includes('drawing')) {
+        targetBinary = 'mspaint.exe';
+      } else if (rawApp.includes('task') && (rawApp.includes('manager') || rawApp.includes('mgr'))) {
+        targetBinary = 'taskmgr.exe';
+      } else if (rawApp.includes('cmd') || rawApp.includes('terminal') || rawApp.includes('command')) {
+        targetBinary = 'cmd.exe';
+      } else if (rawApp.includes('edge')) {
+        targetBinary = 'msedge.exe';
+        extraArgs = 'https://www.bing.com';
       }
 
       // Security Check: Block dangerous system paths or malicious targets
@@ -259,18 +281,26 @@ export async function POST(req: NextRequest) {
             'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
             'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
             `${process.env.LOCALAPPDATA || ''}\\Google\\Chrome\\Application\\chrome.exe`,
+            `${process.env.PROGRAMFILES || 'C:\\Program Files'}\\Google\\Chrome\\Application\\chrome.exe`,
+            `${process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)'}\\Google\\Chrome\\Application\\chrome.exe`,
           ];
 
           let resolvedTarget = targetBinary;
           if (targetBinary === 'chrome.exe' || targetBinary === 'chrome') {
-            const found = chromePaths.find((p) => fs.existsSync(p));
+            const found = chromePaths.find((p) => p && fs.existsSync(p));
             if (found) {
               resolvedTarget = found;
             }
           }
 
-          // Windows 'start "" "<path>"' opens GUI app directly on the desktop
-          exec(`start "" "${resolvedTarget}"`, (err) => {
+          // Launch on Windows desktop without scripts
+          const launchCommand = resolvedTarget.startsWith('ms-settings:')
+            ? `start ${resolvedTarget}`
+            : extraArgs
+            ? `start "" "${resolvedTarget}" ${extraArgs}`
+            : `start "" "${resolvedTarget}"`;
+
+          exec(launchCommand, (err) => {
             if (err) console.error('[OPEN_APP] Launch error:', err);
           });
         } else {

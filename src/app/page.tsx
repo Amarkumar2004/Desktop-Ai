@@ -513,7 +513,7 @@ function DashboardContent() {
       handleNavClick('Tasks');
     } else if (
       lower.startsWith('open ') ||
-      ['chrome', 'notepad', 'calc', 'calculator', 'settings', 'vscode'].includes(lower)
+      ['chrome', 'notepad', 'calc', 'calculator', 'settings', 'vscode', 'application', 'app', 'google', 'browser', 'paint'].includes(lower)
     ) {
       const app = lower.replace(/^open\s+/, '').trim();
       fetch('/api/local/action', {

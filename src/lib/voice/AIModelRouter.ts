@@ -14,6 +14,7 @@ export class AIModelRouter implements IAIModelRouter {
     /\b(?:create\s+task|add\s+task|naya\s+task|task\s+banao|task\s+likho|task\s+queue)\b/i,
     /\b(?:summarize\s+this\s+pdf|open\s+folder|open\s+downloads|show\s+my\s+files)\b/i,
     /\b(?:diagnostics|scan|audit|agent\s+fleet|security\s+scan)\b/i,
+    /\b(?:open|launch|kholo|start|chalao)\s+(?:application|app|chrome|browser|notepad|calc|calculator|settings|vscode|code|paint|cmd|terminal)\b/i,
   ];
 
   private globalPatterns: RegExp[] = [

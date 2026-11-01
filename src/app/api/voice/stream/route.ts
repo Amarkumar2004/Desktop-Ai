@@ -189,14 +189,38 @@ export async function POST(req: NextRequest) {
     action = { type: 'SYSTEM_INFO', payload: { cpu: 28, memory: 52, uptime: '2d 14h' } };
   } else if (
     (lower.includes('open') || lower.includes('kholo') || lower.includes('start') || lower.includes('launch') || lower.includes('chalao')) &&
-    (lower.includes('chrome') || lower.includes('browser') || lower.includes('notepad') || lower.includes('calc') || lower.includes('calculator') || lower.includes('setting') || lower.includes('vscode') || lower.includes('vs code') || lower.includes('explorer') || lower.includes('file manager'))
+    (
+      lower.includes('application') ||
+      lower.includes('app') ||
+      lower.includes('chrome') ||
+      lower.includes('google') ||
+      lower.includes('browser') ||
+      lower.includes('notepad') ||
+      lower.includes('note') ||
+      lower.includes('calc') ||
+      lower.includes('calculator') ||
+      lower.includes('setting') ||
+      lower.includes('vscode') ||
+      lower.includes('vs code') ||
+      lower.includes('code') ||
+      lower.includes('explorer') ||
+      lower.includes('file manager') ||
+      lower.includes('paint') ||
+      lower.includes('cmd') ||
+      lower.includes('terminal') ||
+      lower.includes('task manager')
+    )
   ) {
     let targetApp = 'chrome';
-    if (lower.includes('notepad')) targetApp = 'notepad';
-    else if (lower.includes('calc')) targetApp = 'calculator';
+    if (lower.includes('notepad') || lower.includes('note')) targetApp = 'notepad';
+    else if (lower.includes('calc') || lower.includes('calculator')) targetApp = 'calculator';
     else if (lower.includes('setting')) targetApp = 'settings';
-    else if (lower.includes('vs code') || lower.includes('vscode')) targetApp = 'code';
+    else if (lower.includes('vs code') || lower.includes('vscode') || lower.includes('code')) targetApp = 'code';
     else if (lower.includes('explorer') || lower.includes('file manager')) targetApp = 'explorer';
+    else if (lower.includes('paint')) targetApp = 'paint';
+    else if (lower.includes('cmd') || lower.includes('terminal')) targetApp = 'cmd';
+    else if (lower.includes('task manager') || lower.includes('taskmgr')) targetApp = 'task manager';
+    else targetApp = 'chrome';
 
     assignedAgent = 'SUSI';
     action = {
