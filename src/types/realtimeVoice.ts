@@ -83,6 +83,10 @@ export interface VoiceProcessResult {
     type: 'CREATE_TASK' | 'CREATE_FILE' | 'RUN_DIAGNOSTICS' | 'NAVIGATE_TAB' | 'OPEN_URL' | 'SYSTEM_INFO' | 'CHAT_REPLY' | 'OPEN_APP' | 'CLOSE_APP' | 'VOLUME_CONTROL' | 'MEDIA_CONTROL' | 'POWER_CONTROL' | 'WINDOW_CONTROL' | 'TAKE_SCREENSHOT' | 'OPEN_SPECIAL_FOLDER' | 'CLIPBOARD_ACTION';
     payload?: Record<string, unknown>;
   };
+  actions?: Array<{
+    type: 'CREATE_TASK' | 'CREATE_FILE' | 'RUN_DIAGNOSTICS' | 'NAVIGATE_TAB' | 'OPEN_URL' | 'SYSTEM_INFO' | 'CHAT_REPLY' | 'OPEN_APP' | 'CLOSE_APP' | 'VOLUME_CONTROL' | 'MEDIA_CONTROL' | 'POWER_CONTROL' | 'WINDOW_CONTROL' | 'TAKE_SCREENSHOT' | 'OPEN_SPECIAL_FOLDER' | 'CLIPBOARD_ACTION';
+    payload?: Record<string, unknown>;
+  }>;
   metrics?: {
     cpuPercent: number;
     memoryPercent: number;

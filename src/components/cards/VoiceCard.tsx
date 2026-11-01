@@ -196,41 +196,54 @@ export default function OracleVoiceCard({
           window.history.pushState({}, '', currentUrl.toString());
         } catch {}
         propsRef.current.info('Tab Switched', `Opened ${targetTab.toUpperCase()} tab.`);
-      } else if (
-        res.action?.type &&
-        [
-          'OPEN_APP',
-          'CLOSE_APP',
-          'VOLUME_CONTROL',
-          'MEDIA_CONTROL',
-          'WINDOW_CONTROL',
-          'TAKE_SCREENSHOT',
-          'POWER_CONTROL',
-          'OPEN_SPECIAL_FOLDER',
-          'CLIPBOARD_ACTION',
-        ].includes(res.action.type)
-      ) {
-        const actionType = res.action.type;
-        const payload = res.action.payload || {};
-        fetch('/api/local/action', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            actionType,
-            payload,
-          }),
-        })
-          .then((r) => r.json())
-          .then((data) => {
-            if (data.success) {
-              propsRef.current.success('Action Executed', data.message || `${actionType} executed successfully.`);
-            } else {
-              propsRef.current.errorToast('Action Failed', data.error || `Could not execute ${actionType}`);
+      }
+
+      // Multi-Action Execution Queue (Sequential & Order-Preserving)
+      const executableTypes = [
+        'OPEN_APP',
+        'CLOSE_APP',
+        'VOLUME_CONTROL',
+        'MEDIA_CONTROL',
+        'WINDOW_CONTROL',
+        'TAKE_SCREENSHOT',
+        'POWER_CONTROL',
+        'OPEN_SPECIAL_FOLDER',
+        'CLIPBOARD_ACTION',
+      ];
+
+      const allActions = Array.isArray(res.actions) && res.actions.length > 0
+        ? res.actions
+        : res.action ? [res.action] : [];
+
+      const filteredActions = allActions.filter((a) => a && executableTypes.includes(a.type));
+
+      if (filteredActions.length > 0) {
+        (async () => {
+          for (let i = 0; i < filteredActions.length; i++) {
+            const act = filteredActions[i];
+            try {
+              const r = await fetch('/api/local/action', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  actionType: act.type,
+                  payload: act.payload || {},
+                }),
+              });
+              const data = await r.json();
+              if (data.success) {
+                propsRef.current.success('Action Executed', data.message || `${act.type} executed.`);
+              } else {
+                propsRef.current.errorToast('Action Failed', data.error || `Could not execute ${act.type}`);
+              }
+            } catch (err: any) {
+              propsRef.current.errorToast('Action Error', err.message);
             }
-          })
-          .catch((err) => {
-            propsRef.current.errorToast('Action Error', err.message);
-          });
+            if (i < filteredActions.length - 1) {
+              await new Promise((resolve) => setTimeout(resolve, 250));
+            }
+          }
+        })();
       }
     });
 

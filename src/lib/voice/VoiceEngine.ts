@@ -469,8 +469,13 @@ export class VoiceEngine {
 
           if (eventType === 'metadata' && eventData) {
             metadata = eventData;
-            if (eventData.action && eventData.action.type && eventData.action.type !== 'CHAT_REPLY') {
-              this.taskOrchestrator.planAndDispatch(trimmed, eventData.action);
+            const actionsList = Array.isArray(eventData.actions) && eventData.actions.length > 0
+              ? eventData.actions
+              : eventData.action ? [eventData.action] : [];
+            for (const act of actionsList) {
+              if (act && act.type && act.type !== 'CHAT_REPLY') {
+                this.taskOrchestrator.planAndDispatch(trimmed, act);
+              }
             }
           } else if (eventType === 'token' && eventData?.token) {
             if (!firstTokenRecorded) {
@@ -542,6 +547,7 @@ export class VoiceEngine {
         sourceProvider: finalSourceProvider,
         modelName: finalModelName,
         action: metadata?.action || { type: 'CHAT_REPLY' },
+        actions: metadata?.actions || (metadata?.action ? [metadata.action] : []),
       };
 
       this.responseListeners.forEach((cb) => cb(result));

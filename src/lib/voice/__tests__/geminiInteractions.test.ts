@@ -108,4 +108,58 @@ describe('Gemini Interactions API Route & Ollama Fallback', () => {
       expect(streamData).toContain('notepad');
     }
   });
+
+  it('correctly detects multiple actions for "open chrome and notepad"', async () => {
+    const req = new NextRequest('http://localhost:3000/api/voice/stream', {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'open chrome and notepad' }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const reader = res.body?.getReader();
+    expect(reader).toBeDefined();
+
+    if (reader) {
+      const decoder = new TextDecoder();
+      let streamData = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        streamData += decoder.decode(value);
+      }
+
+      expect(streamData).toContain('OPEN_APP');
+      expect(streamData).toContain('chrome');
+      expect(streamData).toContain('notepad');
+      expect(streamData).toContain('"actions":[');
+    }
+  });
+
+  it('correctly detects multiple actions for "screenshot lo aur desktop dikhao"', async () => {
+    const req = new NextRequest('http://localhost:3000/api/voice/stream', {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'screenshot lo aur desktop dikhao' }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const reader = res.body?.getReader();
+    expect(reader).toBeDefined();
+
+    if (reader) {
+      const decoder = new TextDecoder();
+      let streamData = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        streamData += decoder.decode(value);
+      }
+
+      expect(streamData).toContain('TAKE_SCREENSHOT');
+      expect(streamData).toContain('WINDOW_CONTROL');
+    }
+  });
 });

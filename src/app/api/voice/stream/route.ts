@@ -147,169 +147,258 @@ export async function POST(req: NextRequest) {
   const history: Array<{ role: string; content: string }> = Array.isArray(body.history) ? body.history : [];
   const lower = prompt.toLowerCase();
 
-  // Extract tools & actions
-  let action: any = { type: 'CHAT_REPLY' };
-  let assignedAgent: 'LEX' | 'SUSI' | 'SPY' | 'YORU' = 'SUSI';
+  // -------------------------------------------------------------------------
+  // Multi-Command Extraction Engine (Parallel & Sequential Clause Analysis)
+  // -------------------------------------------------------------------------
+  function parseSingleAction(
+    clause: string,
+    fullText: string,
+    lastActionType?: string
+  ): { action: any; assignedAgent: "LEX" | "SUSI" | "SPY" | "YORU" } | null {
+    const clLower = clause.toLowerCase().trim();
+    if (!clLower) return null;
 
-  if (
-    lower.includes('task') &&
-    (lower.includes('create') || lower.includes('add') || lower.includes('banao') || lower.includes('likho') || lower.includes('naya'))
-  ) {
-    const taskTitle = cleanTaskTitle(prompt);
-    assignedAgent = 'SUSI';
-    action = {
-      type: 'CREATE_TASK',
-      payload: {
-        title: taskTitle.charAt(0).toUpperCase() + taskTitle.slice(1),
-        priority: lower.includes('urgent') || lower.includes('critical') ? 'Critical' : 'High',
-        agent: 'SUSI',
-      },
-    };
-  } else if ((lower.includes('file') || lower.includes('component')) && (lower.includes('create') || lower.includes('banao') || lower.includes('make'))) {
-    const filename = extractFilename(prompt);
-    assignedAgent = 'YORU';
-    action = {
-      type: 'CREATE_FILE',
-      payload: {
-        filename,
-        content: `// Autonomously created by SUSI AI\nexport default function Module() {\n  return <div>${filename} Ready</div>;\n}\n`,
-      },
-    };
-  } else if (lower.includes('code') && (lower.includes('tab') || lower.includes('kholo') || lower.includes('open'))) {
-    assignedAgent = 'YORU';
-    action = { type: 'NAVIGATE_TAB', payload: { tab: 'code' } };
-  } else if (lower.includes('task') && (lower.includes('tab') || lower.includes('kholo') || lower.includes('open') || lower.includes('board'))) {
-    assignedAgent = 'SUSI';
-    action = { type: 'NAVIGATE_TAB', payload: { tab: 'tasks' } };
-  } else if (lower.includes('agent') && (lower.includes('tab') || lower.includes('kholo') || lower.includes('open'))) {
-    assignedAgent = 'LEX';
-    action = { type: 'NAVIGATE_TAB', payload: { tab: 'agents' } };
-  } else if (lower.includes('telemetry') || lower.includes('system') || lower.includes('cpu')) {
-    assignedAgent = 'LEX';
-    action = { type: 'SYSTEM_INFO', payload: { cpu: 28, memory: 52, uptime: '2d 14h' } };
-  } else if (lower.includes("screenshot") || lower.includes("screen capture") || lower.includes("screen photo")) {
-    assignedAgent = 'SUSI';
-    action = { type: 'TAKE_SCREENSHOT', payload: {} };
-  } else if (lower.includes("desktop dikhao") || lower.includes("show desktop") || lower.includes("minimize all") || lower.includes("sab minimize")) {
-    assignedAgent = 'SUSI';
-    action = { type: 'WINDOW_CONTROL', payload: { action: 'show_desktop' } };
-  } else if (lower.includes("volume") || lower.includes("aawaz") || lower.includes("sound") || lower.includes("mute") || lower.includes("unmute")) {
-    let volAction = "mute";
-    if (lower.includes("mute") && !lower.includes("unmute")) volAction = "mute";
-    else if (lower.includes("up") || lower.includes("badhao") || lower.includes("tez") || lower.includes("increase")) volAction = "up";
-    else if (lower.includes("down") || lower.includes("kam") || lower.includes("dheere") || lower.includes("decrease")) volAction = "down";
-    assignedAgent = 'SUSI';
-    action = { type: 'VOLUME_CONTROL', payload: { action: volAction } };
-  } else if (
-    (lower.includes("music") || lower.includes("song") || lower.includes("gana") || lower.includes("track")) &&
-    (lower.includes("play") || lower.includes("pause") || lower.includes("roko") || lower.includes("chalao") || lower.includes("next") || lower.includes("agla") || lower.includes("prev") || lower.includes("pichla"))
-  ) {
-    let mediaAction = "play_pause";
-    if (lower.includes("next") || lower.includes("agla")) mediaAction = "next";
-    else if (lower.includes("prev") || lower.includes("previous") || lower.includes("pichla")) mediaAction = "prev";
-    assignedAgent = 'SUSI';
-    action = { type: 'MEDIA_CONTROL', payload: { action: mediaAction } };
-  } else if (
-    (lower.includes("pc") || lower.includes("computer") || lower.includes("system") || lower.includes("screen")) &&
-    (lower.includes("lock") || lower.includes("sleep") || lower.includes("restart") || lower.includes("shutdown"))
-  ) {
-    let pwrAction = "lock";
-    if (lower.includes("sleep")) pwrAction = "sleep";
-    else if (lower.includes("restart")) pwrAction = "restart";
-    else if (lower.includes("shutdown")) pwrAction = "shutdown";
-    else pwrAction = "lock";
-    assignedAgent = 'SUSI';
-    action = { type: 'POWER_CONTROL', payload: { action: pwrAction } };
-  } else if (
-    lower.includes("downloads folder") || lower.includes("download folder") || lower.includes("desktop folder") || lower.includes("recycle bin") || lower.includes("recyclebin")
-  ) {
-    let folder = "downloads";
-    if (lower.includes("recycle") && (lower.includes("khali") || lower.includes("empty") || lower.includes("clean"))) {
-      folder = "empty_recycle_bin";
-    } else if (lower.includes("recycle")) {
-      folder = "recycle_bin";
-    } else if (lower.includes("desktop")) {
-      folder = "desktop";
-    }
-    assignedAgent = 'SUSI';
-    action = { type: 'OPEN_SPECIAL_FOLDER', payload: { folder } };
-  } else if (lower.includes("clipboard")) {
-    assignedAgent = 'SUSI';
-    action = { type: 'CLIPBOARD_ACTION', payload: { action: 'read' } };
-  } else if (
-    (lower.includes("close") || lower.includes("band karo") || lower.includes("band kar do") || lower.includes("kill") || lower.includes("hatao")) &&
-    !lower.includes("tab") &&
-    !lower.includes("task")
-  ) {
-    let targetApp = "chrome";
-    if (lower.includes("notepad") || lower.includes("note")) targetApp = "notepad";
-    else if (lower.includes("calc") || lower.includes("calculator")) targetApp = "calculator";
-    else if (lower.includes("spotify")) targetApp = "spotify";
-    else if (lower.includes("vlc")) targetApp = "vlc";
-    else if (lower.includes("discord")) targetApp = "discord";
-    else if (lower.includes("word") || lower.includes("winword")) targetApp = "word";
-    else if (lower.includes("excel")) targetApp = "excel";
-    else if (lower.includes("code") || lower.includes("vscode")) targetApp = "code";
-    else if (lower.includes("paint")) targetApp = "paint";
-    else if (lower.includes("chrome") || lower.includes("browser")) targetApp = "chrome";
-    else {
-      const cleaned = lower
-        .replace(/\b(please|plz|bhai|susi|assistant|kripya|zara|ab|abb|mujhe)\b/gi, "")
-        .replace(/\b(close\s+kar\s+do|close\s+karo|close|band\s+kar\s+do|band\s+karo|band|kill|hatao)\b/gi, "")
-        .replace(/\b(application|app)\b/gi, "")
-        .replace(/[?!.,]/g, "")
-        .trim();
-      targetApp = cleaned || "chrome";
-    }
-    assignedAgent = 'SUSI';
-    action = { type: 'CLOSE_APP', payload: { appName: targetApp, target: targetApp } };
-  } else if (
-    !lower.includes('tab') &&
-    (lower.includes('open') || lower.includes('kholo') || lower.includes('start') || lower.includes('launch') || lower.includes('chalao')) &&
-    !lower.includes('create task') &&
-    !lower.includes('task add') &&
-    !lower.includes('create file')
-  ) {
-    let targetApp = 'chrome';
-    if (lower.includes('notepad') || lower.includes('note')) targetApp = 'notepad';
-    else if (lower.includes('calc') || lower.includes('calculator')) targetApp = 'calculator';
-    else if (lower.includes('setting')) targetApp = 'settings';
-    else if (lower.includes('vs code') || lower.includes('vscode') || lower.includes('code')) targetApp = 'code';
-    else if (lower.includes('explorer') || lower.includes('file manager')) targetApp = 'explorer';
-    else if (lower.includes('paint')) targetApp = 'paint';
-    else if (lower.includes('cmd') || lower.includes('terminal')) targetApp = 'cmd';
-    else if (lower.includes('task manager') || lower.includes('taskmgr')) targetApp = 'task manager';
-    else if (lower.includes('spotify')) targetApp = 'spotify';
-    else if (lower.includes('discord')) targetApp = 'discord';
-    else if (lower.includes('whatsapp')) targetApp = 'whatsapp';
-    else if (lower.includes('telegram')) targetApp = 'telegram';
-    else if (lower.includes('steam')) targetApp = 'steam';
-    else if (lower.includes('vlc')) targetApp = 'vlc';
-    else if (lower.includes('word') || lower.includes('winword') || lower.includes('ms word')) targetApp = 'word';
-    else if (lower.includes('excel') || lower.includes('sheet') || lower.includes('ms excel')) targetApp = 'excel';
-    else if (lower.includes('powerpoint') || lower.includes('ppt') || lower.includes('slide')) targetApp = 'powerpoint';
-    else if (lower.includes('zoom')) targetApp = 'zoom';
-    else if (lower.includes('chrome') || lower.includes('browser') || lower.includes('google') || lower.includes('application') || lower.includes('app')) targetApp = 'chrome';
-    else {
-      // Dynamic extraction for any arbitrary app name
-      const cleaned = lower
-        .replace(/\b(please|plz|bhai|susi|assistant|kripya|zara|ab|abb|mujhe|mera|meri)\b/gi, '')
-        .replace(/\b(open\s+kar\s+do|open\s+karo|open\s+kijiye|open\s+kr|open\s+krna|open)\b/gi, '')
-        .replace(/\b(khol\s+do|kholo|kholiye|kholna|khol)\b/gi, '')
-        .replace(/\b(launch\s+kar\s+do|launch\s+karo|launch|start\s+kar\s+do|start\s+karo|start|chalao)\b/gi, '')
-        .replace(/\b(application|app)\b/gi, '')
-        .replace(/[?!.,]/g, '')
-        .trim();
-      targetApp = cleaned || 'chrome';
+    // 1. Task creation
+    if (
+      clLower.includes("task") &&
+      (clLower.includes("create") || clLower.includes("add") || clLower.includes("banao") || clLower.includes("likho") || clLower.includes("naya"))
+    ) {
+      const taskTitle = cleanTaskTitle(clause);
+      return {
+        assignedAgent: "SUSI",
+        action: {
+          type: "CREATE_TASK",
+          payload: {
+            title: taskTitle.charAt(0).toUpperCase() + taskTitle.slice(1),
+            priority: clLower.includes("urgent") || clLower.includes("critical") ? "Critical" : "High",
+            agent: "SUSI",
+          },
+        },
+      };
     }
 
-    assignedAgent = 'SUSI';
-    action = {
-      type: 'OPEN_APP',
-      payload: { appName: targetApp, target: targetApp },
-    };
+    // 2. File creation
+    if ((clLower.includes("file") || clLower.includes("component")) && (clLower.includes("create") || clLower.includes("banao") || clLower.includes("make"))) {
+      const filename = extractFilename(clause);
+      return {
+        assignedAgent: "YORU",
+        action: {
+          type: "CREATE_FILE",
+          payload: {
+            filename,
+            content: `// Autonomously created by SUSI AI\nexport default function Module() {\n  return <div>${filename} Ready</div>;\n}\n`,
+          },
+        },
+      };
+    }
+
+    // 3. Tab navigation
+    if (clLower.includes("code") && (clLower.includes("tab") || clLower.includes("kholo") || clLower.includes("open"))) {
+      return { assignedAgent: "YORU", action: { type: "NAVIGATE_TAB", payload: { tab: "code" } } };
+    }
+    if (clLower.includes("task") && (clLower.includes("tab") || clLower.includes("kholo") || clLower.includes("open") || clLower.includes("board"))) {
+      return { assignedAgent: "SUSI", action: { type: "NAVIGATE_TAB", payload: { tab: "tasks" } } };
+    }
+    if (clLower.includes("agent") && (clLower.includes("tab") || clLower.includes("kholo") || clLower.includes("open"))) {
+      return { assignedAgent: "LEX", action: { type: "NAVIGATE_TAB", payload: { tab: "agents" } } };
+    }
+
+    // 4. System info
+    if (clLower.includes("telemetry") || clLower.includes("system info") || clLower.includes("cpu usage")) {
+      return { assignedAgent: "LEX", action: { type: "SYSTEM_INFO", payload: { cpu: 28, memory: 52, uptime: "2d 14h" } } };
+    }
+
+    // 5. Screenshot
+    if (clLower.includes("screenshot") || clLower.includes("screen capture") || clLower.includes("screen photo")) {
+      return { assignedAgent: "SUSI", action: { type: "TAKE_SCREENSHOT", payload: {} } };
+    }
+
+    // 6. Window control / Desktop
+    if (clLower.includes("desktop dikhao") || clLower.includes("show desktop") || clLower.includes("minimize all") || clLower.includes("sab minimize") || clLower === "desktop") {
+      return { assignedAgent: "SUSI", action: { type: "WINDOW_CONTROL", payload: { action: "show_desktop" } } };
+    }
+
+    // 7. Volume
+    if (clLower.includes("volume") || clLower.includes("aawaz") || clLower.includes("sound") || clLower.includes("mute") || clLower.includes("unmute")) {
+      let volAction = "mute";
+      if (clLower.includes("mute") && !clLower.includes("unmute")) volAction = "mute";
+      else if (clLower.includes("up") || clLower.includes("badhao") || clLower.includes("tez") || clLower.includes("increase")) volAction = "up";
+      else if (clLower.includes("down") || clLower.includes("kam") || clLower.includes("dheere") || clLower.includes("decrease")) volAction = "down";
+      return { assignedAgent: "SUSI", action: { type: "VOLUME_CONTROL", payload: { action: volAction } } };
+    }
+
+    // 8. Media
+    if (
+      (clLower.includes("music") || clLower.includes("song") || clLower.includes("gana") || clLower.includes("track")) &&
+      (clLower.includes("play") || clLower.includes("pause") || clLower.includes("roko") || clLower.includes("chalao") || clLower.includes("next") || clLower.includes("agla") || clLower.includes("prev") || clLower.includes("pichla"))
+    ) {
+      let mediaAction = "play_pause";
+      if (clLower.includes("next") || clLower.includes("agla")) mediaAction = "next";
+      else if (clLower.includes("prev") || clLower.includes("previous") || clLower.includes("pichla")) mediaAction = "prev";
+      return { assignedAgent: "SUSI", action: { type: "MEDIA_CONTROL", payload: { action: mediaAction } } };
+    }
+
+    // 9. Power
+    if (
+      (clLower.includes("pc") || clLower.includes("computer") || clLower.includes("system") || clLower.includes("screen")) &&
+      (clLower.includes("lock") || clLower.includes("sleep") || clLower.includes("restart") || clLower.includes("shutdown"))
+    ) {
+      let pwrAction = "lock";
+      if (clLower.includes("sleep")) pwrAction = "sleep";
+      else if (clLower.includes("restart")) pwrAction = "restart";
+      else if (clLower.includes("shutdown")) pwrAction = "shutdown";
+      return { assignedAgent: "SUSI", action: { type: "POWER_CONTROL", payload: { action: pwrAction } } };
+    }
+
+    // 10. Special folder
+    if (
+      clLower.includes("downloads folder") ||
+      clLower.includes("download folder") ||
+      clLower.includes("desktop folder") ||
+      clLower.includes("recycle bin") ||
+      clLower.includes("recyclebin")
+    ) {
+      let folder = "downloads";
+      if (clLower.includes("recycle") && (clLower.includes("khali") || clLower.includes("empty") || clLower.includes("clean"))) {
+        folder = "empty_recycle_bin";
+      } else if (clLower.includes("recycle")) {
+        folder = "recycle_bin";
+      } else if (clLower.includes("desktop")) {
+        folder = "desktop";
+      }
+      return { assignedAgent: "SUSI", action: { type: "OPEN_SPECIAL_FOLDER", payload: { folder } } };
+    }
+
+    // 11. Clipboard
+    if (clLower.includes("clipboard")) {
+      return { assignedAgent: "SUSI", action: { type: "CLIPBOARD_ACTION", payload: { action: "read" } } };
+    }
+
+    // 12. Close App
+    if (
+      (clLower.includes("close") || clLower.includes("band karo") || clLower.includes("band kar do") || clLower.includes("kill") || clLower.includes("hatao")) &&
+      !clLower.includes("tab") &&
+      !clLower.includes("task")
+    ) {
+      let targetApp = "chrome";
+      if (clLower.includes("notepad") || clLower.includes("note")) targetApp = "notepad";
+      else if (clLower.includes("calc") || clLower.includes("calculator")) targetApp = "calculator";
+      else if (clLower.includes("spotify")) targetApp = "spotify";
+      else if (clLower.includes("vlc")) targetApp = "vlc";
+      else if (clLower.includes("discord")) targetApp = "discord";
+      else if (clLower.includes("word") || clLower.includes("winword")) targetApp = "word";
+      else if (clLower.includes("excel")) targetApp = "excel";
+      else if (clLower.includes("code") || clLower.includes("vscode")) targetApp = "code";
+      else if (clLower.includes("paint")) targetApp = "paint";
+      else if (clLower.includes("chrome") || clLower.includes("browser")) targetApp = "chrome";
+      else {
+        const cleaned = clLower
+          .replace(/\b(please|plz|bhai|susi|assistant|kripya|zara|ab|abb|mujhe)\b/gi, "")
+          .replace(/\b(close\s+kar\s+do|close\s+karo|close|band\s+kar\s+do|band\s+karo|band|kill|hatao)\b/gi, "")
+          .replace(/\b(application|app)\b/gi, "")
+          .replace(/[?!.,]/g, "")
+          .trim();
+        targetApp = cleaned || "chrome";
+      }
+      return { assignedAgent: "SUSI", action: { type: "CLOSE_APP", payload: { appName: targetApp, target: targetApp } } };
+    }
+
+    // 13. Open App
+    if (
+      !clLower.includes("tab") &&
+      (clLower.includes("open") || clLower.includes("kholo") || clLower.includes("start") || clLower.includes("launch") || clLower.includes("chalao")) &&
+      !clLower.includes("create task") &&
+      !clLower.includes("task add") &&
+      !clLower.includes("create file")
+    ) {
+      let targetApp = "chrome";
+      if (clLower.includes("notepad") || clLower.includes("note")) targetApp = "notepad";
+      else if (clLower.includes("calc") || clLower.includes("calculator")) targetApp = "calculator";
+      else if (clLower.includes("setting")) targetApp = "settings";
+      else if (clLower.includes("vs code") || clLower.includes("vscode") || clLower.includes("code")) targetApp = "code";
+      else if (clLower.includes("explorer") || clLower.includes("file manager")) targetApp = "explorer";
+      else if (clLower.includes("paint")) targetApp = "paint";
+      else if (clLower.includes("cmd") || clLower.includes("terminal")) targetApp = "cmd";
+      else if (clLower.includes("task manager") || clLower.includes("taskmgr")) targetApp = "task manager";
+      else if (clLower.includes("spotify")) targetApp = "spotify";
+      else if (clLower.includes("discord")) targetApp = "discord";
+      else if (clLower.includes("whatsapp")) targetApp = "whatsapp";
+      else if (clLower.includes("telegram")) targetApp = "telegram";
+      else if (clLower.includes("steam")) targetApp = "steam";
+      else if (clLower.includes("vlc")) targetApp = "vlc";
+      else if (clLower.includes("word") || clLower.includes("winword") || clLower.includes("ms word")) targetApp = "word";
+      else if (clLower.includes("excel") || clLower.includes("sheet") || clLower.includes("ms excel")) targetApp = "excel";
+      else if (clLower.includes("powerpoint") || clLower.includes("ppt") || clLower.includes("slide")) targetApp = "powerpoint";
+      else if (clLower.includes("zoom")) targetApp = "zoom";
+      else if (clLower.includes("chrome") || clLower.includes("browser") || clLower.includes("google") || clLower.includes("application") || clLower.includes("app")) targetApp = "chrome";
+      else {
+        const cleaned = clLower
+          .replace(/\b(please|plz|bhai|susi|assistant|kripya|zara|ab|abb|mujhe|mera|meri)\b/gi, "")
+          .replace(/\b(open\s+kar\s+do|open\s+karo|open\s+kijiye|open\s+kr|open\s+krna|open)\b/gi, "")
+          .replace(/\b(khol\s+do|kholo|kholiye|kholna|khol)\b/gi, "")
+          .replace(/\b(launch\s+kar\s+do|launch\s+karo|launch|start\s+kar\s+do|start\s+karo|start|chalao)\b/gi, "")
+          .replace(/\b(application|app)\b/gi, "")
+          .replace(/[?!.,]/g, "")
+          .trim();
+        targetApp = cleaned || "chrome";
+      }
+      return { assignedAgent: "SUSI", action: { type: "OPEN_APP", payload: { appName: targetApp, target: targetApp } } };
+    }
+
+    // 14. Chained OPEN_APP continuation (e.g. "open chrome and notepad")
+    if (lastActionType === "OPEN_APP") {
+      const knownApps = ["chrome", "notepad", "calc", "calculator", "settings", "code", "vscode", "paint", "spotify", "vlc", "discord", "word", "excel", "powerpoint", "zoom", "steam", "whatsapp", "telegram"];
+      const matched = knownApps.find((a) => clLower.includes(a));
+      if (matched) {
+        const targetApp = matched === "calc" ? "calculator" : matched;
+        return { assignedAgent: "SUSI", action: { type: "OPEN_APP", payload: { appName: targetApp, target: targetApp } } };
+      }
+    }
+
+    // 15. Chained CLOSE_APP continuation
+    if (lastActionType === "CLOSE_APP") {
+      const knownApps = ["chrome", "notepad", "calc", "calculator", "settings", "code", "vscode", "paint", "spotify", "vlc", "discord", "word", "excel", "powerpoint", "zoom", "steam", "whatsapp", "telegram"];
+      const matched = knownApps.find((a) => clLower.includes(a));
+      if (matched) {
+        const targetApp = matched === "calc" ? "calculator" : matched;
+        return { assignedAgent: "SUSI", action: { type: "CLOSE_APP", payload: { appName: targetApp, target: targetApp } } };
+      }
+    }
+
+    return null;
   }
 
+  // Multi-clause conjunction splitting
+  const conjunctRegex = /\b(?:aur\s+phir|aur\s+saath\s+mein|and\s+then|and\s+also|ke\s+baad)\b|[;,]|\b(?:aur|and)\b/i;
+  const rawParts = prompt.split(conjunctRegex).map((p) => p.trim()).filter((p) => p.length > 0);
+
+  const actions: any[] = [];
+  let assignedAgent: "LEX" | "SUSI" | "SPY" | "YORU" = "SUSI";
+
+  if (rawParts.length > 1) {
+    let lastType = "";
+    for (const part of rawParts) {
+      const res = parseSingleAction(part, prompt, lastType);
+      if (res && res.action && res.action.type !== "CHAT_REPLY") {
+        actions.push(res.action);
+        assignedAgent = res.assignedAgent;
+        lastType = res.action.type;
+      }
+    }
+  }
+
+  // Fallback to single action if no multi-clause or no sub-actions detected
+  if (actions.length === 0) {
+    const singleRes = parseSingleAction(prompt, prompt);
+    if (singleRes && singleRes.action) {
+      actions.push(singleRes.action);
+      assignedAgent = singleRes.assignedAgent;
+    } else {
+      actions.push({ type: "CHAT_REPLY" });
+    }
+  }
+
+  const action = actions[0] || { type: "CHAT_REPLY" };
   const stream = new ReadableStream({
     async start(controller) {
       let isClosed = false;
@@ -338,6 +427,7 @@ export async function POST(req: NextRequest) {
       sendEvent('metadata', {
         assignedAgent,
         action,
+        actions,
         timestamp: new Date().toISOString(),
       });
 
@@ -355,7 +445,20 @@ export async function POST(req: NextRequest) {
           .map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`)
           .join('\n');
         let appLaunchContext = '';
-        if (action?.type === 'OPEN_APP') {
+        if (actions.length > 1) {
+          const summary = actions.map((a: any) => {
+            if (a.type === 'OPEN_APP') return `opened ${a.payload?.appName}`;
+            if (a.type === 'CLOSE_APP') return `closed ${a.payload?.appName}`;
+            if (a.type === 'VOLUME_CONTROL') return `adjusted volume (${a.payload?.action})`;
+            if (a.type === 'MEDIA_CONTROL') return `media ${a.payload?.action}`;
+            if (a.type === 'TAKE_SCREENSHOT') return 'captured screenshot';
+            if (a.type === 'WINDOW_CONTROL') return 'showed desktop';
+            if (a.type === 'POWER_CONTROL') return `power ${a.payload?.action}`;
+            if (a.type === 'OPEN_SPECIAL_FOLDER') return `opened ${a.payload?.folder} folder`;
+            return a.type;
+          }).join(', ');
+          appLaunchContext = ` You are executing multiple simultaneous actions for the user: [${summary}]. Confirm cheerfully and naturally in 1-2 spoken sentences that you have completed all of them.`;
+        } else if (action?.type === 'OPEN_APP') {
           appLaunchContext = ` You are currently launching the application "${action.payload?.appName || 'application'}" on their Windows PC, confirm cheerfully that you are opening it.`;
         } else if (action?.type === 'CLOSE_APP') {
           appLaunchContext = ` You are closing the application "${action.payload?.appName || 'application'}" on their Windows PC, confirm cheerfully that you have closed it.`;
