@@ -261,6 +261,26 @@ export async function POST(req: NextRequest) {
       } else if (rawApp.includes('edge')) {
         targetBinary = 'msedge.exe';
         extraArgs = 'https://www.bing.com';
+      } else if (rawApp.includes('spotify')) {
+        targetBinary = 'spotify:';
+      } else if (rawApp.includes('discord')) {
+        targetBinary = 'discord:';
+      } else if (rawApp.includes('whatsapp')) {
+        targetBinary = 'whatsapp:';
+      } else if (rawApp.includes('steam')) {
+        targetBinary = 'steam:';
+      } else if (rawApp.includes('word') || rawApp.includes('winword') || rawApp.includes('doc')) {
+        targetBinary = 'winword.exe';
+      } else if (rawApp.includes('excel') || rawApp.includes('sheet')) {
+        targetBinary = 'excel.exe';
+      } else if (rawApp.includes('powerpoint') || rawApp.includes('ppt') || rawApp.includes('slide')) {
+        targetBinary = 'powerpnt.exe';
+      } else if (rawApp.includes('vlc')) {
+        targetBinary = 'vlc.exe';
+      } else if (rawApp.includes('zoom')) {
+        targetBinary = 'zoom.exe';
+      } else if (rawApp.includes('telegram')) {
+        targetBinary = 'telegram.exe';
       }
 
       // Security Check: Block dangerous system paths or malicious targets
@@ -294,7 +314,8 @@ export async function POST(req: NextRequest) {
           }
 
           // Launch on Windows desktop without scripts
-          const launchCommand = resolvedTarget.startsWith('ms-settings:')
+          const isProtocol = resolvedTarget.includes(':') && !resolvedTarget.includes('\\');
+          const launchCommand = isProtocol
             ? `start ${resolvedTarget}`
             : extraArgs
             ? `start "" "${resolvedTarget}" ${extraArgs}`

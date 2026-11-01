@@ -188,28 +188,11 @@ export async function POST(req: NextRequest) {
     assignedAgent = 'LEX';
     action = { type: 'SYSTEM_INFO', payload: { cpu: 28, memory: 52, uptime: '2d 14h' } };
   } else if (
+    !lower.includes('tab') &&
     (lower.includes('open') || lower.includes('kholo') || lower.includes('start') || lower.includes('launch') || lower.includes('chalao')) &&
-    (
-      lower.includes('application') ||
-      lower.includes('app') ||
-      lower.includes('chrome') ||
-      lower.includes('google') ||
-      lower.includes('browser') ||
-      lower.includes('notepad') ||
-      lower.includes('note') ||
-      lower.includes('calc') ||
-      lower.includes('calculator') ||
-      lower.includes('setting') ||
-      lower.includes('vscode') ||
-      lower.includes('vs code') ||
-      lower.includes('code') ||
-      lower.includes('explorer') ||
-      lower.includes('file manager') ||
-      lower.includes('paint') ||
-      lower.includes('cmd') ||
-      lower.includes('terminal') ||
-      lower.includes('task manager')
-    )
+    !lower.includes('create task') &&
+    !lower.includes('task add') &&
+    !lower.includes('create file')
   ) {
     let targetApp = 'chrome';
     if (lower.includes('notepad') || lower.includes('note')) targetApp = 'notepad';
@@ -220,7 +203,29 @@ export async function POST(req: NextRequest) {
     else if (lower.includes('paint')) targetApp = 'paint';
     else if (lower.includes('cmd') || lower.includes('terminal')) targetApp = 'cmd';
     else if (lower.includes('task manager') || lower.includes('taskmgr')) targetApp = 'task manager';
-    else targetApp = 'chrome';
+    else if (lower.includes('spotify')) targetApp = 'spotify';
+    else if (lower.includes('discord')) targetApp = 'discord';
+    else if (lower.includes('whatsapp')) targetApp = 'whatsapp';
+    else if (lower.includes('telegram')) targetApp = 'telegram';
+    else if (lower.includes('steam')) targetApp = 'steam';
+    else if (lower.includes('vlc')) targetApp = 'vlc';
+    else if (lower.includes('word') || lower.includes('winword') || lower.includes('ms word')) targetApp = 'word';
+    else if (lower.includes('excel') || lower.includes('sheet') || lower.includes('ms excel')) targetApp = 'excel';
+    else if (lower.includes('powerpoint') || lower.includes('ppt') || lower.includes('slide')) targetApp = 'powerpoint';
+    else if (lower.includes('zoom')) targetApp = 'zoom';
+    else if (lower.includes('chrome') || lower.includes('browser') || lower.includes('google') || lower.includes('application') || lower.includes('app')) targetApp = 'chrome';
+    else {
+      // Dynamic extraction for any arbitrary app name
+      const cleaned = lower
+        .replace(/\b(please|plz|bhai|susi|assistant|kripya|zara|ab|abb|mujhe|mera|meri)\b/gi, '')
+        .replace(/\b(open\s+kar\s+do|open\s+karo|open\s+kijiye|open\s+kr|open\s+krna|open)\b/gi, '')
+        .replace(/\b(khol\s+do|kholo|kholiye|kholna|khol)\b/gi, '')
+        .replace(/\b(launch\s+kar\s+do|launch\s+karo|launch|start\s+kar\s+do|start\s+karo|start|chalao)\b/gi, '')
+        .replace(/\b(application|app)\b/gi, '')
+        .replace(/[?!.,]/g, '')
+        .trim();
+      targetApp = cleaned || 'chrome';
+    }
 
     assignedAgent = 'SUSI';
     action = {
@@ -273,7 +278,10 @@ export async function POST(req: NextRequest) {
           .slice(-4)
           .map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`)
           .join('\n');
-        const fullPrompt = `System: You are SUSI, a warm, super-friendly conversational AI desktop assistant. Reply naturally in 1-2 spoken sentences (Hindi/English/Hinglish). Do not use asterisks or markdown formatting. Keep it concise for voice.\n${
+        const appLaunchContext = action?.type === 'OPEN_APP'
+          ? ` You are currently launching the application "${action.payload?.appName || 'application'}" on their Windows PC, so confirm cheerfully and naturally that you are opening it.`
+          : '';
+        const fullPrompt = `System: You are SUSI, a warm, super-friendly conversational AI desktop assistant.${appLaunchContext} Reply naturally in 1-2 spoken sentences (Hindi/English/Hinglish). Do not use asterisks or markdown formatting. Keep it concise for voice.\n${
           historyText ? `History:\n${historyText}\n` : ''
         }User Query: ${prompt}`;
 
