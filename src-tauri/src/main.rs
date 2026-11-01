@@ -201,7 +201,6 @@ fn scan_installed_apps() -> Result<Vec<InstalledApp>, String> {
             }
         }
 
-        // Deduplicate by name
         apps.sort_by(|a, b| a.name.cmp(&b.name));
         apps.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name));
 
@@ -210,6 +209,36 @@ fn scan_installed_apps() -> Result<Vec<InstalledApp>, String> {
 
     #[cfg(not(target_os = "windows"))]
     Ok(Vec::new())
+}
+
+/// Windows Credential Manager: Secure Storage
+#[tauri::command]
+fn save_credential_secure(service: String, user: String, secret: String) -> Result<bool, String> {
+    let entry = keyring::Entry::new(&service, &user).map_err(|e| e.to_string())?;
+    entry.set_password(&secret).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Windows Credential Manager: Secure Retrieval
+#[tauri::command]
+fn get_credential_secure(service: String, user: String) -> Result<Option<String>, String> {
+    let entry = keyring::Entry::new(&service, &user).map_err(|e| e.to_string())?;
+    match entry.get_password() {
+        Ok(p) => Ok(Some(p)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Windows Credential Manager: Secure Deletion
+#[tauri::command]
+fn delete_credential_secure(service: String, user: String) -> Result<bool, String> {
+    let entry = keyring::Entry::new(&service, &user).map_err(|e| e.to_string())?;
+    match entry.delete_password() {
+        Ok(_) => Ok(true),
+        Err(keyring::Error::NoEntry) => Ok(false),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// Executes a verified native PC action
@@ -248,12 +277,13 @@ fn execute_pc_action(
                 let mut cmd = std::process::Command::new("cmd.exe");
                 cmd.args(&["/c", "start", "", binary]);
                 cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-                cmd.spawn().map_err(|e| e.to_string())?;
+                let child = cmd.spawn().map_err(|e| e.to_string())?;
+                let pid = child.id();
 
                 Ok(ActionResult {
                     success: true,
                     message: format!("Successfully launched \"{}\"", app),
-                    result: Some(serde_json::json!({ "appName": app, "binary": binary })),
+                    result: Some(serde_json::json!({ "appName": app, "binary": binary, "pid": pid })),
                 })
             }
             #[cfg(not(target_os = "windows"))]
@@ -298,13 +328,22 @@ fn execute_pc_action(
                 let mut cmd = std::process::Command::new("taskkill");
                 cmd.args(&["/IM", &proc_name, "/F"]);
                 cmd.creation_flags(0x08000000);
-                cmd.spawn().map_err(|e| e.to_string())?;
+                let output = cmd.output().map_err(|e| e.to_string())?;
 
-                Ok(ActionResult {
-                    success: true,
-                    message: format!("Closed application process \"{}\".", proc_name),
-                    result: Some(serde_json::json!({ "process": proc_name })),
-                })
+                if output.status.success() {
+                    Ok(ActionResult {
+                        success: true,
+                        message: format!("Closed application process \"{}\".", proc_name),
+                        result: Some(serde_json::json!({ "process": proc_name })),
+                    })
+                } else {
+                    let err_msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    Ok(ActionResult {
+                        success: false,
+                        message: if err_msg.is_empty() { format!("Process \"{}\" not found or already closed.", proc_name) } else { err_msg },
+                        result: None,
+                    })
+                }
             }
             #[cfg(not(target_os = "windows"))]
             Ok(ActionResult {
@@ -312,6 +351,34 @@ fn execute_pc_action(
                 message: "Unsupported on this OS".to_string(),
                 result: None,
             })
+        }
+        "CLIPBOARD_ACTION" => {
+            let action = pl.get("action").and_then(|v| v.as_str()).unwrap_or("read").to_lowercase();
+            match arboard::Clipboard::new() {
+                Ok(mut clipboard) => {
+                    if action == "write" {
+                        let text = pl.get("text").and_then(|v| v.as_str()).unwrap_or_default();
+                        clipboard.set_text(text).map_err(|e| e.to_string())?;
+                        Ok(ActionResult {
+                            success: true,
+                            message: "Text safely copied to Windows clipboard natively via Win32 API.".to_string(),
+                            result: Some(serde_json::json!({ "copied": true })),
+                        })
+                    } else {
+                        let content = clipboard.get_text().unwrap_or_default();
+                        Ok(ActionResult {
+                            success: true,
+                            message: format!("Clipboard content retrieved natively ({} chars).", content.len()),
+                            result: Some(serde_json::json!({ "content": content })),
+                        })
+                    }
+                }
+                Err(e) => Ok(ActionResult {
+                    success: false,
+                    message: format!("Failed to access native clipboard: {}", e),
+                    result: None,
+                }),
+            }
         }
         "OPEN_URL" => {
             let url = pl.get("url").and_then(|v| v.as_str()).unwrap_or_default();
@@ -350,7 +417,7 @@ fn execute_pc_action(
                 let (key_char, count) = match action.as_str() {
                     "up" | "increase" => (175, 4),
                     "down" | "decrease" => (174, 4),
-                    _ => (173, 1), // mute
+                    _ => (173, 1),
                 };
                 let ps_cmd = format!(
                     "1..{} | ForEach-Object {{ (New-Object -ComObject WScript.Shell).SendKeys([char]{}) }}",
@@ -383,7 +450,7 @@ fn execute_pc_action(
                 } else if action.contains("prev") {
                     177
                 } else {
-                    179 // play/pause
+                    179
                 };
                 let ps_cmd = format!("(New-Object -ComObject WScript.Shell).SendKeys([char]{})", key_char);
                 let mut cmd = std::process::Command::new("powershell");
@@ -512,7 +579,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_system_metrics,
             scan_installed_apps,
-            execute_pc_action
+            execute_pc_action,
+            save_credential_secure,
+            get_credential_secure,
+            delete_credential_secure
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

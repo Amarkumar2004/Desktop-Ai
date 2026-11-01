@@ -6,6 +6,7 @@ import { spawn } from 'child_process';
 import { z } from 'zod';
 import { SecurityValidator } from '@/lib/security/securityValidator';
 import { auditLogger } from '@/lib/security/auditLogger';
+import { validateDesktopAuth } from '@/lib/security/desktopAuth';
 
 // =============================================================================
 // 1. RATE LIMITING & ORIGIN / CSRF SECURITY
@@ -225,7 +226,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 3. Request Body Parsing & Zod Schema Validation
+  // 3. Desktop Authentication & Authorization Check
+  const auth = validateDesktopAuth(req);
+  if (!auth.authorized) {
+    auditLogger.log({
+      requestId: `req_${Date.now()}`,
+      actionType: 'SECURITY_BLOCKED',
+      target: 'DESKTOP_AUTH',
+      riskLevel: 'HIGH',
+      status: 'DENIED',
+      executionResult: {
+        success: false,
+        message: auth.reason || 'Unauthorized desktop control access',
+      },
+    });
+    return NextResponse.json(
+      { success: false, error: auth.reason, code: 'UNAUTHORIZED_ACCESS' },
+      { status: 401 }
+    );
+  }
+
+  // 4. Request Body Parsing & Zod Schema Validation
   let rawBody: unknown;
   try {
     rawBody = await req.json();
@@ -488,16 +509,27 @@ export async function POST(req: NextRequest) {
       }
 
       if (process.platform === 'win32') {
-        await new Promise((resolve) => {
+        const exitCode = await new Promise<number | null>((resolve) => {
           const child = spawn('taskkill.exe', ['/IM', processName, '/F'], { stdio: 'ignore' });
-          child.on('close', resolve);
-          child.on('error', resolve);
+          child.on('close', (code) => resolve(code));
+          child.on('error', () => resolve(-1));
         });
+
+        if (exitCode !== 0) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Process "${processName}" could not be terminated (exit code ${exitCode}). It may not be currently running.`,
+              code: 'PROCESS_NOT_FOUND',
+            },
+            { status: 404 }
+          );
+        }
       }
 
       return NextResponse.json({
         success: true,
-        message: `Application "${rawApp}" (${processName}) termination dispatched.`,
+        message: `Application "${rawApp}" (${processName}) successfully terminated.`,
         appName: rawApp,
         processName,
       });

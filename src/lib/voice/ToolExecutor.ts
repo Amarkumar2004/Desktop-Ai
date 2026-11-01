@@ -9,6 +9,7 @@ import type { IToolExecutor } from '@/types/realtimeVoice';
 import { createTask } from '@/backend/services/taskService';
 import { permissionManager } from '@/lib/security/permissionManager';
 import { SecurityValidator } from '@/lib/security/securityValidator';
+import { fetchWithDesktopAuth } from '@/lib/security/desktopAuthClient';
 
 export class ToolExecutor implements IToolExecutor {
   public async execute(
@@ -42,9 +43,8 @@ export class ToolExecutor implements IToolExecutor {
 
       try {
         if (typeof window !== 'undefined') {
-          const infoRes = await fetch('/api/local/action', {
+          const infoRes = await fetchWithDesktopAuth('/api/local/action', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               actionType: 'GET_FILE_INFO',
               payload: { path: targetPath },
@@ -97,9 +97,8 @@ export class ToolExecutor implements IToolExecutor {
       // 1.3 Safe Execution via Windows Recycle Bin
       try {
         if (typeof window !== 'undefined') {
-          const delRes = await fetch('/api/local/action', {
+          const delRes = await fetchWithDesktopAuth('/api/local/action', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               actionType: 'DELETE_FILE',
               payload: { path: fileMeta.path || targetPath },
@@ -160,9 +159,8 @@ export class ToolExecutor implements IToolExecutor {
 
       try {
         if (typeof window !== 'undefined') {
-          const res = await fetch('/api/local/action', {
+          const res = await fetchWithDesktopAuth('/api/local/action', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               actionType: 'EXECUTE_COMMAND',
               payload: { command },
@@ -210,9 +208,8 @@ export class ToolExecutor implements IToolExecutor {
 
       try {
         if (typeof window !== 'undefined') {
-          const createRes = await fetch('/api/local/action', {
+          const createRes = await fetchWithDesktopAuth('/api/local/action', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               actionType: 'CREATE_FILE',
               payload: { filename, content },
@@ -302,9 +299,8 @@ export class ToolExecutor implements IToolExecutor {
           }
 
           // Fallback to local action API
-          const res = await fetch('/api/local/action', {
+          const res = await fetchWithDesktopAuth('/api/local/action', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ actionType: 'SYSTEM_INFO', payload: {} }),
           });
           const data = await res.json();
@@ -393,9 +389,8 @@ export class ToolExecutor implements IToolExecutor {
           }
 
           // 8.2 Fallback to secured local action API
-          const res = await fetch('/api/local/action', {
+          const res = await fetchWithDesktopAuth('/api/local/action', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               actionType: actionUpper,
               payload: payload || {},

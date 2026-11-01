@@ -1,0 +1,125 @@
+[
+  {
+    "category": "Security",
+    "test": "Block Unauthorized Local Access (Missing Token)",
+    "passed": true,
+    "actualResult": "HTTP Status 401: Unauthorized: Missing required desktop authorization token in request header or cookie.",
+    "evidence": "{\"success\":false,\"error\":\"Unauthorized: Missing required desktop authorization token in request header or cookie.\",\"code\":\"UNAUTHORIZED_ACCESS\"}",
+    "limitations": "Unauthorized local callers lacking SUSI desktop auth session are strictly blocked."
+  },
+  {
+    "category": "Security",
+    "test": "Desktop Auth Session Handshake & Token Acquisition",
+    "passed": true,
+    "actualResult": "HTTP Status 200: Received 256-bit cryptographically signed session token",
+    "evidence": "{\"success\":true,\"tokenLength\":64}"
+  },
+  {
+    "category": "System Telemetry",
+    "test": "Real Hardware Metrics (CPU, RAM, Uptime)",
+    "passed": true,
+    "actualResult": "CPU: 27%, RAM: 87% (13.6/15.7 GB), Uptime: 8d 12h, Platform: win32",
+    "evidence": "{\"success\":true,\"cpu\":27,\"memory\":87,\"usedRamGb\":13.6,\"totalRamGb\":15.7,\"uptime\":\"8d 12h\",\"platform\":\"win32\",\"arch\":\"x64\",\"hostname\":\"Amar\"}",
+    "limitations": "CPU percent is instantaneous single-sample load across active cores."
+  },
+  {
+    "category": "Security",
+    "test": "Critical Process Kill Protection (explorer.exe & csrss.exe)",
+    "passed": true,
+    "actualResult": "HTTP Status 403: Terminating critical system process \"explorer.exe\" is blocked for OS stability.",
+    "evidence": "{\"success\":false,\"error\":\"Terminating critical system process \\\"explorer.exe\\\" is blocked for OS stability.\",\"code\":\"SECURITY_VIOLATION\"}",
+    "limitations": "Protected processes include csrss, lsass, explorer, services, smss, wininit, taskmgr."
+  },
+  {
+    "category": "Security",
+    "test": "CSRF / Cross-Site Origin Header Blocking",
+    "passed": true,
+    "actualResult": "HTTP Status 403: Cross-site request blocked by security policy.",
+    "evidence": "{\"success\":false,\"error\":\"Cross-site request blocked by security policy.\",\"code\":\"FORBIDDEN_ORIGIN\"}"
+  },
+  {
+    "category": "Security",
+    "test": "Path Traversal Prevention (C:\\Windows\\System32\\cmd.exe)",
+    "passed": true,
+    "actualResult": "HTTP Status 403: Target path touches critical system OS files or directory (C:\\Windows\\System32\\cmd.exe).",
+    "evidence": "{\"success\":false,\"error\":\"Target path touches critical system OS files or directory (C:\\\\Windows\\\\System32\\\\cmd.exe).\",\"code\":\"SECURITY_VIOLATION\"}"
+  },
+  {
+    "category": "Security",
+    "test": "Disallow Dangerous URL Protocols (javascript: / file:)",
+    "passed": true,
+    "actualResult": "HTTP Status 403: Only http and https protocols are permitted.",
+    "evidence": "{\"success\":false,\"error\":\"Only http and https protocols are permitted.\",\"code\":\"DISALLOWED_PROTOCOL\"}"
+  },
+  {
+    "category": "Security",
+    "test": "Strict Zod Rejection of Unknown Action Type",
+    "passed": true,
+    "actualResult": "HTTP Status 400: Validation failed: actionType: Invalid option: expected one of \"GET_FILE_INFO\"|\"DELETE_FILE\"|\"DELETE_FOLDER\"|\"CREATE_FILE\"|\"OVERWRITE_FILE\"|\"READ_FILE\"|\"INSPECT_FILE\"|\"OPEN_APP\"|\"CLOSE_APP\"|\"OPEN_URL\"|\"VOLUME_CONTROL\"|\"MEDIA_CONTROL\"|\"WINDOW_CONTROL\"|\"TAKE_SCREENSHOT\"|\"CLIPBOARD_ACTION\"|\"POWER_CONTROL\"|\"OPEN_SPECIAL_FOLDER\"|\"SYSTEM_INFO\"",
+    "evidence": "{\"success\":false,\"error\":\"Validation failed: actionType: Invalid option: expected one of \\\"GET_FILE_INFO\\\"|\\\"DELETE_FILE\\\"|\\\"DELETE_FOLDER\\\"|\\\"CREATE_FILE\\\"|\\\"OVERWRITE_FILE\\\"|\\\"READ_FILE\\\"|\\\"INSPECT_FILE\\\"|\\\"OPEN_APP\\\"|\\\"CLOSE_APP\\\"|\\\"OPEN_URL\\\"|\\\"VOLUME_CONTROL\\\"|\\\"MEDIA_CONTROL\\\"|\\\"WINDOW_CONTROL\\\"|\\\"TAKE_SCREENSHOT\\\"|\\\"CLIPBOARD_ACTION\\\"|\\\"POWER_CONTROL\\\"|\\\"OPEN_SPECIAL_FOLDER\\\"|\\\"SYSTEM_INFO\\\"\",\"code\":\"VALIDATION_ERROR\"}"
+  },
+  {
+    "category": "Windows Automation",
+    "test": "Safe Stdin Clipboard Write & Readback",
+    "passed": true,
+    "actualResult": "Written: \"SUSI_E2E_VERIFICATION_TOKEN_1793519410561\", Readback: \"SUSI_E2E_VERIFICATION_TOKEN_1793519410561\"",
+    "evidence": "{\"writeData\":{\"success\":true,\"message\":\"Text safely copied to Windows clipboard.\"},\"readData\":{\"success\":true,\"content\":\"SUSI_E2E_VERIFICATION_TOKEN_1793519410561\",\"message\":\"Clipboard content: \\\"SUSI_E2E_VERIFICATION_TOKEN_1793519410561\\\"\"}}"
+  },
+  {
+    "category": "Windows Automation",
+    "test": "Launch Allowed App (Notepad) & Terminate Safely",
+    "passed": true,
+    "actualResult": "Launch result: \"Application \"notepad\" launched via verified desktop launcher.\", Close result: \"Application \"notepad\" (notepad.exe) successfully terminated.\"",
+    "evidence": "{\"launchData\":{\"success\":true,\"message\":\"Application \\\"notepad\\\" launched via verified desktop launcher.\",\"appName\":\"notepad\",\"targetBinary\":\"notepad.exe\"},\"closeData\":{\"success\":true,\"message\":\"Application \\\"notepad\\\" (notepad.exe) successfully terminated.\",\"appName\":\"notepad\",\"processName\":\"notepad.exe\"}}"
+  },
+  {
+    "category": "Windows Automation",
+    "test": "Reject Close on Non-Existent Process",
+    "passed": true,
+    "actualResult": "HTTP Status 404: success=false, code=PROCESS_NOT_FOUND, error=\"Process \"nonexistent_ghost_proc_1793519413184.exe\" could not be terminated (exit code 128). It may not be currently running.\"",
+    "evidence": "{\"success\":false,\"error\":\"Process \\\"nonexistent_ghost_proc_1793519413184.exe\\\" could not be terminated (exit code 128). It may not be currently running.\",\"code\":\"PROCESS_NOT_FOUND\"}",
+    "limitations": "taskkill exit status is verified: non-zero return codes reject with PROCESS_NOT_FOUND."
+  },
+  {
+    "category": "Windows Automation",
+    "test": "Volume Adjustment & Media Playback Control",
+    "passed": true,
+    "actualResult": "Volume: \"Volume action \"up\" applied.\", Media: \"Media playback action \"play_pause\" dispatched.\"",
+    "evidence": "{\"volData\":{\"success\":true,\"message\":\"Volume action \\\"up\\\" applied.\",\"action\":\"up\"},\"mediaData\":{\"success\":true,\"message\":\"Media playback action \\\"play_pause\\\" dispatched.\",\"action\":\"play_pause\"}}"
+  },
+  {
+    "category": "Action Pipeline",
+    "test": "Idempotent Deduplication of Double Triggers",
+    "passed": true,
+    "actualResult": "Trigger 1: success=true, Trigger 2 (immediate): isDuplicate=true, message=\"Action NAVIGATE_TAB already completed recently (deduplicated).\"",
+    "evidence": "{\"trigger1\":{\"success\":true,\"actionId\":\"act_1793519413517_7xowo4\",\"message\":\"Navigated to e2e_test_tab view.\",\"status\":\"completed\",\"result\":{\"tab\":\"e2e_test_tab\"}},\"trigger2\":{\"success\":true,\"actionId\":\"act_1793519413517_7xowo4\",\"message\":\"Action NAVIGATE_TAB already completed recently (deduplicated).\",\"status\":\"completed\",\"isDuplicate\":true}}"
+  },
+  {
+    "category": "Task Orchestrator",
+    "test": "Multi-Step Execution DAG with Dependencies",
+    "passed": true,
+    "actualResult": "Task 1: \"OPEN_APP: chrome\", Task 2: \"OPEN_URL:\" (dependsOn: [\"otask_1793519413518_0_awxf\"])",
+    "evidence": "[{\"id\":\"otask_1793519413518_0_awxf\",\"title\":\"OPEN_APP: chrome\"},{\"id\":\"otask_1793519413519_1_m90x\",\"title\":\"OPEN_URL:\",\"dependsOn\":[\"otask_1793519413518_0_awxf\"]}]"
+  },
+  {
+    "category": "Task Orchestrator",
+    "test": "Cascading Cancellation of Dependent Tasks",
+    "passed": true,
+    "actualResult": "Parent status: cancelled, Dependent status: cancelled",
+    "evidence": "{\"parentStatus\":\"cancelled\",\"dependentStatus\":\"cancelled\"}"
+  },
+  {
+    "category": "Security",
+    "test": "Plaintext API Keys Scrubbed from Persistent Storage",
+    "passed": true,
+    "actualResult": "Contains plaintext raw key in localStorage: false",
+    "evidence": "Storage scrubbed successfully: true"
+  },
+  {
+    "category": "Persistence",
+    "test": "Database Query Fallback without Crash",
+    "passed": true,
+    "actualResult": "Retrieved 8 tasks, created new task \"E2E Verified Offline Task\" (ID: task-1793519413522)",
+    "evidence": "{\"taskCount\":8,\"newTaskId\":\"task-1793519413522\"}"
+  }
+]

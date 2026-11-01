@@ -17,6 +17,7 @@ import {
   clearAllNotifications as apiClearAll,
 } from '@/backend/services/notificationService';
 import { getStoredAgents } from '@/backend/services/agentService';
+import { fetchWithDesktopAuth } from '@/lib/security/desktopAuthClient';
 
 // Dynamically import AgentTownEmbed with SSR disabled
 
@@ -516,7 +517,7 @@ function DashboardContent() {
       ['chrome', 'notepad', 'calc', 'calculator', 'settings', 'vscode', 'application', 'app', 'google', 'browser', 'paint', 'spotify', 'vlc', 'discord'].includes(lower)
     ) {
       const app = lower.replace(/^open\s+/, '').trim();
-      fetch('/api/local/action', {
+      fetchWithDesktopAuth('/api/local/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actionType: 'OPEN_APP', payload: { appName: app } }),
@@ -529,7 +530,7 @@ function DashboardContent() {
       reply = `${ts} [APP] Launched "${app.toUpperCase()}" via Windows Desktop Launcher.`;
     } else if (lower.startsWith('close ') || lower.startsWith('kill ')) {
       const app = lower.replace(/^(close|kill)\s+/, '').trim();
-      fetch('/api/local/action', {
+      fetchWithDesktopAuth('/api/local/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actionType: 'CLOSE_APP', payload: { appName: app } }),
@@ -542,7 +543,7 @@ function DashboardContent() {
         .catch(() => {});
       reply = `${ts} [APP] Requested termination of "${app.toUpperCase()}".`;
     } else if (lower === 'screenshot' || lower === 'screen capture') {
-      fetch('/api/local/action', {
+      fetchWithDesktopAuth('/api/local/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actionType: 'TAKE_SCREENSHOT', payload: {} }),
@@ -555,21 +556,21 @@ function DashboardContent() {
       reply = `${ts} [SCREENSHOT] Capturing desktop screen to Desktop folder...`;
     } else if (lower.startsWith('volume ') || lower === 'mute') {
       const volAction = lower.replace(/^volume\s+/, '').trim() || 'mute';
-      fetch('/api/local/action', {
+      fetchWithDesktopAuth('/api/local/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actionType: 'VOLUME_CONTROL', payload: { action: volAction } }),
       }).catch(() => {});
       reply = `${ts} [AUDIO] Dispatched volume action: "${volAction}".`;
     } else if (lower === 'lock' || lower === 'lock pc') {
-      fetch('/api/local/action', {
+      fetchWithDesktopAuth('/api/local/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actionType: 'POWER_CONTROL', payload: { action: 'lock' } }),
       }).catch(() => {});
       reply = `${ts} [POWER] Workstation lock initiated.`;
     } else if (lower === 'desktop' || lower === 'minimize all') {
-      fetch('/api/local/action', {
+      fetchWithDesktopAuth('/api/local/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ actionType: 'WINDOW_CONTROL', payload: { action: 'show_desktop' } }),
