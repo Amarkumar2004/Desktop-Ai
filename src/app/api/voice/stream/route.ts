@@ -187,6 +187,82 @@ export async function POST(req: NextRequest) {
   } else if (lower.includes('telemetry') || lower.includes('system') || lower.includes('cpu')) {
     assignedAgent = 'LEX';
     action = { type: 'SYSTEM_INFO', payload: { cpu: 28, memory: 52, uptime: '2d 14h' } };
+  } else if (lower.includes("screenshot") || lower.includes("screen capture") || lower.includes("screen photo")) {
+    assignedAgent = 'SUSI';
+    action = { type: 'TAKE_SCREENSHOT', payload: {} };
+  } else if (lower.includes("desktop dikhao") || lower.includes("show desktop") || lower.includes("minimize all") || lower.includes("sab minimize")) {
+    assignedAgent = 'SUSI';
+    action = { type: 'WINDOW_CONTROL', payload: { action: 'show_desktop' } };
+  } else if (lower.includes("volume") || lower.includes("aawaz") || lower.includes("sound") || lower.includes("mute") || lower.includes("unmute")) {
+    let volAction = "mute";
+    if (lower.includes("mute") && !lower.includes("unmute")) volAction = "mute";
+    else if (lower.includes("up") || lower.includes("badhao") || lower.includes("tez") || lower.includes("increase")) volAction = "up";
+    else if (lower.includes("down") || lower.includes("kam") || lower.includes("dheere") || lower.includes("decrease")) volAction = "down";
+    assignedAgent = 'SUSI';
+    action = { type: 'VOLUME_CONTROL', payload: { action: volAction } };
+  } else if (
+    (lower.includes("music") || lower.includes("song") || lower.includes("gana") || lower.includes("track")) &&
+    (lower.includes("play") || lower.includes("pause") || lower.includes("roko") || lower.includes("chalao") || lower.includes("next") || lower.includes("agla") || lower.includes("prev") || lower.includes("pichla"))
+  ) {
+    let mediaAction = "play_pause";
+    if (lower.includes("next") || lower.includes("agla")) mediaAction = "next";
+    else if (lower.includes("prev") || lower.includes("previous") || lower.includes("pichla")) mediaAction = "prev";
+    assignedAgent = 'SUSI';
+    action = { type: 'MEDIA_CONTROL', payload: { action: mediaAction } };
+  } else if (
+    (lower.includes("pc") || lower.includes("computer") || lower.includes("system") || lower.includes("screen")) &&
+    (lower.includes("lock") || lower.includes("sleep") || lower.includes("restart") || lower.includes("shutdown"))
+  ) {
+    let pwrAction = "lock";
+    if (lower.includes("sleep")) pwrAction = "sleep";
+    else if (lower.includes("restart")) pwrAction = "restart";
+    else if (lower.includes("shutdown")) pwrAction = "shutdown";
+    else pwrAction = "lock";
+    assignedAgent = 'SUSI';
+    action = { type: 'POWER_CONTROL', payload: { action: pwrAction } };
+  } else if (
+    lower.includes("downloads folder") || lower.includes("download folder") || lower.includes("desktop folder") || lower.includes("recycle bin") || lower.includes("recyclebin")
+  ) {
+    let folder = "downloads";
+    if (lower.includes("recycle") && (lower.includes("khali") || lower.includes("empty") || lower.includes("clean"))) {
+      folder = "empty_recycle_bin";
+    } else if (lower.includes("recycle")) {
+      folder = "recycle_bin";
+    } else if (lower.includes("desktop")) {
+      folder = "desktop";
+    }
+    assignedAgent = 'SUSI';
+    action = { type: 'OPEN_SPECIAL_FOLDER', payload: { folder } };
+  } else if (lower.includes("clipboard")) {
+    assignedAgent = 'SUSI';
+    action = { type: 'CLIPBOARD_ACTION', payload: { action: 'read' } };
+  } else if (
+    (lower.includes("close") || lower.includes("band karo") || lower.includes("band kar do") || lower.includes("kill") || lower.includes("hatao")) &&
+    !lower.includes("tab") &&
+    !lower.includes("task")
+  ) {
+    let targetApp = "chrome";
+    if (lower.includes("notepad") || lower.includes("note")) targetApp = "notepad";
+    else if (lower.includes("calc") || lower.includes("calculator")) targetApp = "calculator";
+    else if (lower.includes("spotify")) targetApp = "spotify";
+    else if (lower.includes("vlc")) targetApp = "vlc";
+    else if (lower.includes("discord")) targetApp = "discord";
+    else if (lower.includes("word") || lower.includes("winword")) targetApp = "word";
+    else if (lower.includes("excel")) targetApp = "excel";
+    else if (lower.includes("code") || lower.includes("vscode")) targetApp = "code";
+    else if (lower.includes("paint")) targetApp = "paint";
+    else if (lower.includes("chrome") || lower.includes("browser")) targetApp = "chrome";
+    else {
+      const cleaned = lower
+        .replace(/\b(please|plz|bhai|susi|assistant|kripya|zara|ab|abb|mujhe)\b/gi, "")
+        .replace(/\b(close\s+kar\s+do|close\s+karo|close|band\s+kar\s+do|band\s+karo|band|kill|hatao)\b/gi, "")
+        .replace(/\b(application|app)\b/gi, "")
+        .replace(/[?!.,]/g, "")
+        .trim();
+      targetApp = cleaned || "chrome";
+    }
+    assignedAgent = 'SUSI';
+    action = { type: 'CLOSE_APP', payload: { appName: targetApp, target: targetApp } };
   } else if (
     !lower.includes('tab') &&
     (lower.includes('open') || lower.includes('kholo') || lower.includes('start') || lower.includes('launch') || lower.includes('chalao')) &&
@@ -278,9 +354,26 @@ export async function POST(req: NextRequest) {
           .slice(-4)
           .map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content}`)
           .join('\n');
-        const appLaunchContext = action?.type === 'OPEN_APP'
-          ? ` You are currently launching the application "${action.payload?.appName || 'application'}" on their Windows PC, so confirm cheerfully and naturally that you are opening it.`
-          : '';
+        let appLaunchContext = '';
+        if (action?.type === 'OPEN_APP') {
+          appLaunchContext = ` You are currently launching the application "${action.payload?.appName || 'application'}" on their Windows PC, confirm cheerfully that you are opening it.`;
+        } else if (action?.type === 'CLOSE_APP') {
+          appLaunchContext = ` You are closing the application "${action.payload?.appName || 'application'}" on their Windows PC, confirm cheerfully that you have closed it.`;
+        } else if (action?.type === 'VOLUME_CONTROL') {
+          appLaunchContext = ` You have adjusted the system volume (${action.payload?.action}), confirm cheerfully.`;
+        } else if (action?.type === 'MEDIA_CONTROL') {
+          appLaunchContext = ` You have executed the media playback command (${action.payload?.action}), confirm briefly.`;
+        } else if (action?.type === 'TAKE_SCREENSHOT') {
+          appLaunchContext = ' You captured a desktop screenshot and saved it to the Desktop folder, confirm cheerfully.';
+        } else if (action?.type === 'WINDOW_CONTROL') {
+          appLaunchContext = ' You minimized all windows and showed the desktop, confirm cheerfully.';
+        } else if (action?.type === 'POWER_CONTROL') {
+          appLaunchContext = ` You executed power command "${action.payload?.action}" on the PC, confirm.`;
+        } else if (action?.type === 'OPEN_SPECIAL_FOLDER') {
+          appLaunchContext = ` You opened the "${action.payload?.folder}" folder, confirm cheerfully.`;
+        } else if (action?.type === 'CLIPBOARD_ACTION') {
+          appLaunchContext = ' You accessed the Windows clipboard, confirm.';
+        }
         const fullPrompt = `System: You are SUSI, a warm, super-friendly conversational AI desktop assistant.${appLaunchContext} Reply naturally in 1-2 spoken sentences (Hindi/English/Hinglish). Do not use asterisks or markdown formatting. Keep it concise for voice.\n${
           historyText ? `History:\n${historyText}\n` : ''
         }User Query: ${prompt}`;

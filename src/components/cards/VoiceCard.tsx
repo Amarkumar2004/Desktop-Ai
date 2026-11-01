@@ -196,26 +196,40 @@ export default function OracleVoiceCard({
           window.history.pushState({}, '', currentUrl.toString());
         } catch {}
         propsRef.current.info('Tab Switched', `Opened ${targetTab.toUpperCase()} tab.`);
-      } else if (res.action?.type === 'OPEN_APP' && res.action.payload) {
-        const app = (res.action.payload.appName as string) || 'chrome';
+      } else if (
+        res.action?.type &&
+        [
+          'OPEN_APP',
+          'CLOSE_APP',
+          'VOLUME_CONTROL',
+          'MEDIA_CONTROL',
+          'WINDOW_CONTROL',
+          'TAKE_SCREENSHOT',
+          'POWER_CONTROL',
+          'OPEN_SPECIAL_FOLDER',
+          'CLIPBOARD_ACTION',
+        ].includes(res.action.type)
+      ) {
+        const actionType = res.action.type;
+        const payload = res.action.payload || {};
         fetch('/api/local/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            actionType: 'OPEN_APP',
-            payload: { appName: app },
+            actionType,
+            payload,
           }),
         })
           .then((r) => r.json())
           .then((data) => {
             if (data.success) {
-              propsRef.current.success('App Launched', `Opened ${app.toUpperCase()} on Windows desktop.`);
+              propsRef.current.success('Action Executed', data.message || `${actionType} executed successfully.`);
             } else {
-              propsRef.current.errorToast('Launch Failed', data.error || `Could not open ${app}`);
+              propsRef.current.errorToast('Action Failed', data.error || `Could not execute ${actionType}`);
             }
           })
           .catch((err) => {
-            propsRef.current.errorToast('Launch Error', err.message);
+            propsRef.current.errorToast('Action Error', err.message);
           });
       }
     });

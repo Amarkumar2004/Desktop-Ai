@@ -330,5 +330,39 @@ describe('Advanced PC Permission & Action Approval System', () => {
       expect(classification.riskLevel).toBe('LOW');
       expect(classification.requiresApproval).toBe(false);
     });
+
+    it('classifies CLOSE_APP as LOW risk for normal apps and BLOCKS critical system processes', () => {
+      const normalClose = ActionClassifier.classify('CLOSE_APP', { appName: 'notepad' });
+      expect(normalClose.riskLevel).toBe('LOW');
+      expect(normalClose.requiresApproval).toBe(false);
+
+      const blockedClose = ActionClassifier.classify('CLOSE_APP', { appName: 'explorer.exe' });
+      expect(blockedClose.isBlocked).toBe(true);
+      expect(blockedClose.riskLevel).toBe('HIGH');
+    });
+
+    it('classifies POWER_CONTROL hierarchically (lock=LOW, sleep=MEDIUM, restart/shutdown=HIGH)', () => {
+      const lockClass = ActionClassifier.classify('POWER_CONTROL', { action: 'lock' });
+      expect(lockClass.riskLevel).toBe('LOW');
+      expect(lockClass.requiresApproval).toBe(false);
+
+      const sleepClass = ActionClassifier.classify('POWER_CONTROL', { action: 'sleep' });
+      expect(sleepClass.riskLevel).toBe('MEDIUM');
+      expect(sleepClass.requiresApproval).toBe(true);
+
+      const restartClass = ActionClassifier.classify('POWER_CONTROL', { action: 'restart' });
+      expect(restartClass.riskLevel).toBe('HIGH');
+      expect(restartClass.requiresApproval).toBe(true);
+    });
+
+    it('classifies VOLUME, MEDIA, SCREENSHOT, and WINDOW controls as LOW risk', () => {
+      expect(ActionClassifier.classify('VOLUME_CONTROL', { action: 'up' }).riskLevel).toBe('LOW');
+      expect(ActionClassifier.classify('MEDIA_CONTROL', { action: 'play_pause' }).riskLevel).toBe('LOW');
+      expect(ActionClassifier.classify('TAKE_SCREENSHOT', {}).riskLevel).toBe('LOW');
+      expect(ActionClassifier.classify('WINDOW_CONTROL', { action: 'show_desktop' }).riskLevel).toBe('LOW');
+      expect(ActionClassifier.classify('OPEN_SPECIAL_FOLDER', { folder: 'downloads' }).riskLevel).toBe('LOW');
+      expect(ActionClassifier.classify('CLIPBOARD_ACTION', { action: 'read' }).riskLevel).toBe('LOW');
+    });
   });
 });
+

@@ -80,7 +80,7 @@ export interface VoiceProcessResult {
   modelName?: string;
   audioUrl?: string;
   action?: {
-    type: 'CREATE_TASK' | 'CREATE_FILE' | 'RUN_DIAGNOSTICS' | 'NAVIGATE_TAB' | 'OPEN_URL' | 'SYSTEM_INFO' | 'CHAT_REPLY' | 'OPEN_APP';
+    type: 'CREATE_TASK' | 'CREATE_FILE' | 'RUN_DIAGNOSTICS' | 'NAVIGATE_TAB' | 'OPEN_URL' | 'SYSTEM_INFO' | 'CHAT_REPLY' | 'OPEN_APP' | 'CLOSE_APP' | 'VOLUME_CONTROL' | 'MEDIA_CONTROL' | 'POWER_CONTROL' | 'WINDOW_CONTROL' | 'TAKE_SCREENSHOT' | 'OPEN_SPECIAL_FOLDER' | 'CLIPBOARD_ACTION';
     payload?: Record<string, unknown>;
   };
   metrics?: {

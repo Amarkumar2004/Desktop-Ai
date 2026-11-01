@@ -345,6 +345,280 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // -------------------------------------------------------------
+    // 6. CLOSE_APP (Safe Windows Process Termination)
+    // -------------------------------------------------------------
+    if (actionType === 'CLOSE_APP') {
+      const rawApp = String(payload?.appName || payload?.target || '').trim().toLowerCase();
+      let processName = rawApp;
+
+      if (rawApp.includes('chrome') || rawApp.includes('browser') || rawApp.includes('google')) {
+        processName = 'chrome.exe';
+      } else if (rawApp.includes('notepad') || rawApp.includes('editor')) {
+        processName = 'notepad.exe';
+      } else if (rawApp.includes('calc') || rawApp.includes('calculator')) {
+        processName = 'calc.exe';
+      } else if (rawApp.includes('vs code') || rawApp.includes('vscode') || rawApp.includes('code')) {
+        processName = 'Code.exe';
+      } else if (rawApp.includes('paint')) {
+        processName = 'mspaint.exe';
+      } else if (rawApp.includes('spotify')) {
+        processName = 'Spotify.exe';
+      } else if (rawApp.includes('vlc')) {
+        processName = 'vlc.exe';
+      } else if (rawApp.includes('discord')) {
+        processName = 'Discord.exe';
+      } else if (rawApp.includes('word') || rawApp.includes('winword')) {
+        processName = 'WINWORD.EXE';
+      } else if (rawApp.includes('excel')) {
+        processName = 'EXCEL.EXE';
+      } else if (rawApp.includes('powerpoint') || rawApp.includes('ppt')) {
+        processName = 'POWERPNT.EXE';
+      } else if (rawApp.includes('edge')) {
+        processName = 'msedge.exe';
+      } else if (!processName.endsWith('.exe')) {
+        processName = `${processName}.exe`;
+      }
+
+      const criticalProcesses = ['explorer.exe', 'csrss.exe', 'svchost.exe', 'services.exe', 'lsass.exe', 'smss.exe', 'wininit.exe', 'taskmgr.exe'];
+      if (criticalProcesses.includes(processName.toLowerCase())) {
+        return NextResponse.json({
+          success: false,
+          error: `Terminating critical system process "${processName}" is blocked for OS stability.`,
+          code: 'SECURITY_VIOLATION',
+        }, { status: 403 });
+      }
+
+      try {
+        if (process.platform === 'win32') {
+          exec(`taskkill /IM "${processName}" /F`, (err) => {
+            if (err) console.warn('[CLOSE_APP] Taskkill notice:', err.message);
+          });
+        }
+        return NextResponse.json({
+          success: true,
+          message: `Application "${rawApp}" (${processName}) closed successfully.`,
+          appName: rawApp,
+          processName,
+        });
+      } catch (closeErr: unknown) {
+        const msg = closeErr instanceof Error ? closeErr.message : 'Failed to terminate application';
+        return NextResponse.json({ success: false, error: msg }, { status: 500 });
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 7. VOLUME_CONTROL (Windows Native CoreAudio Emulation)
+    // -------------------------------------------------------------
+    if (actionType === 'VOLUME_CONTROL') {
+      const volAction = String(payload?.action || 'mute').toLowerCase();
+      try {
+        if (process.platform === 'win32') {
+          let keyChar = 173; // mute toggle
+          let count = 1;
+          if (volAction === 'up' || volAction === 'increase') {
+            keyChar = 175; // vol up
+            count = 4;
+          } else if (volAction === 'down' || volAction === 'decrease') {
+            keyChar = 174; // vol down
+            count = 4;
+          }
+
+          const psCmd = `powershell -NoProfile -Command "1..${count} | ForEach-Object { (New-Object -ComObject WScript.Shell).SendKeys([char]${keyChar}) }"`;
+          exec(psCmd, (err) => {
+            if (err) console.error('[VOLUME_CONTROL] Exec error:', err);
+          });
+        }
+
+        return NextResponse.json({
+          success: true,
+          message: `Volume action "${volAction}" executed successfully.`,
+          action: volAction,
+        });
+      } catch (volErr: unknown) {
+        const msg = volErr instanceof Error ? volErr.message : 'Failed to adjust volume';
+        return NextResponse.json({ success: false, error: msg }, { status: 500 });
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 8. MEDIA_CONTROL (Windows Native Media Key Event Emulation)
+    // -------------------------------------------------------------
+    if (actionType === 'MEDIA_CONTROL') {
+      const mediaAction = String(payload?.action || 'play_pause').toLowerCase();
+      try {
+        if (process.platform === 'win32') {
+          let keyChar = 179; // play/pause
+          if (mediaAction.includes('next')) keyChar = 176;
+          else if (mediaAction.includes('prev')) keyChar = 177;
+
+          const psCmd = `powershell -NoProfile -Command "(New-Object -ComObject WScript.Shell).SendKeys([char]${keyChar})"`;
+          exec(psCmd, (err) => {
+            if (err) console.error('[MEDIA_CONTROL] Exec error:', err);
+          });
+        }
+
+        return NextResponse.json({
+          success: true,
+          message: `Media playback action "${mediaAction}" dispatched.`,
+          action: mediaAction,
+        });
+      } catch (mediaErr: unknown) {
+        const msg = mediaErr instanceof Error ? mediaErr.message : 'Failed media command';
+        return NextResponse.json({ success: false, error: msg }, { status: 500 });
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 9. WINDOW_CONTROL (Desktop Minimization & Window Management)
+    // -------------------------------------------------------------
+    if (actionType === 'WINDOW_CONTROL') {
+      const winAction = String(payload?.action || 'show_desktop').toLowerCase();
+      try {
+        if (process.platform === 'win32') {
+          const method = winAction.includes('restore') ? 'UndoMinimizeAll' : 'MinimizeAll';
+          const psCmd = `powershell -NoProfile -Command "(New-Object -ComObject Shell.Application).${method}()"`;
+          exec(psCmd, (err) => {
+            if (err) console.error('[WINDOW_CONTROL] Exec error:', err);
+          });
+        }
+
+        return NextResponse.json({
+          success: true,
+          message: `Window control "${winAction}" executed.`,
+          action: winAction,
+        });
+      } catch (winErr: unknown) {
+        const msg = winErr instanceof Error ? winErr.message : 'Failed window action';
+        return NextResponse.json({ success: false, error: msg }, { status: 500 });
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 10. TAKE_SCREENSHOT (Desktop Screen Capture Saved to Desktop)
+    // -------------------------------------------------------------
+    if (actionType === 'TAKE_SCREENSHOT') {
+      try {
+        const desktopDir = path.join(process.env.USERPROFILE || 'C:\\', 'Desktop');
+        const filename = `Screenshot_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+        const outPath = path.join(desktopDir, filename);
+
+        if (process.platform === 'win32') {
+          const escapedOut = outPath.replace(/\\/g, '\\\\');
+          const psCmd = `powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; \$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; \$bmp = New-Object System.Drawing.Bitmap(\$b.Width, \$b.Height); \$g = [System.Drawing.Graphics]::FromImage(\$bmp); \$g.CopyFromScreen(\$b.Location, [System.Drawing.Point]::Empty, \$b.Size); \$bmp.Save('${escapedOut}'); \$g.Dispose(); \$bmp.Dispose();"`;
+          exec(psCmd, (err) => {
+            if (err) console.error('[TAKE_SCREENSHOT] Capture error:', err);
+          });
+        }
+
+        return NextResponse.json({
+          success: true,
+          message: `Desktop screenshot captured and saved as "${filename}" on Desktop.`,
+          filePath: outPath,
+          filename,
+        });
+      } catch (shotErr: unknown) {
+        const msg = shotErr instanceof Error ? shotErr.message : 'Failed to capture screenshot';
+        return NextResponse.json({ success: false, error: msg }, { status: 500 });
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 11. POWER_CONTROL (Workstation Lock, Sleep, Restart, Shutdown)
+    // -------------------------------------------------------------
+    if (actionType === 'POWER_CONTROL') {
+      const pwrAction = String(payload?.action || 'lock').toLowerCase();
+      try {
+        if (process.platform === 'win32') {
+          if (pwrAction === 'lock') {
+            exec('rundll32.exe user32.dll,LockWorkStation');
+          } else if (pwrAction === 'sleep') {
+            exec('rundll32.exe powrprof.dll,SetSuspendState 0,1,0');
+          } else if (pwrAction === 'restart') {
+            exec('shutdown /r /t 10');
+          } else if (pwrAction === 'shutdown') {
+            exec('shutdown /s /t 10');
+          }
+        }
+
+        return NextResponse.json({
+          success: true,
+          message: `Power command "${pwrAction}" executed successfully.`,
+          action: pwrAction,
+        });
+      } catch (pwrErr: unknown) {
+        const msg = pwrErr instanceof Error ? pwrErr.message : 'Failed power command';
+        return NextResponse.json({ success: false, error: msg }, { status: 500 });
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 12. OPEN_SPECIAL_FOLDER (Downloads, Desktop, Recycle Bin)
+    // -------------------------------------------------------------
+    if (actionType === 'OPEN_SPECIAL_FOLDER') {
+      const folder = String(payload?.folder || 'downloads').toLowerCase();
+      try {
+        if (process.platform === 'win32') {
+          if (folder.includes('empty_recycle')) {
+            exec('powershell -NoProfile -Command "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"');
+          } else if (folder.includes('download')) {
+            exec('start shell:Downloads');
+          } else if (folder.includes('desktop')) {
+            exec('start shell:Desktop');
+          } else if (folder.includes('doc')) {
+            exec('start shell:Personal');
+          } else if (folder.includes('picture')) {
+            exec('start shell:My Pictures');
+          } else if (folder.includes('recycle')) {
+            exec('start shell:RecycleBinFolder');
+          }
+        }
+
+        return NextResponse.json({
+          success: true,
+          message: `Special folder command "${folder}" executed.`,
+          folder,
+        });
+      } catch (foldErr: unknown) {
+        const msg = foldErr instanceof Error ? foldErr.message : 'Failed folder command';
+        return NextResponse.json({ success: false, error: msg }, { status: 500 });
+      }
+    }
+
+    // -------------------------------------------------------------
+    // 13. CLIPBOARD_ACTION (Read / Write Windows Clipboard)
+    // -------------------------------------------------------------
+    if (actionType === 'CLIPBOARD_ACTION') {
+      const clipAction = String(payload?.action || 'read').toLowerCase();
+      try {
+        if (process.platform === 'win32') {
+          if (clipAction === 'write' && payload?.text) {
+            const escaped = String(payload.text).replace(/"/g, '`"');
+            exec(`powershell -NoProfile -Command "Set-Clipboard -Value '${escaped}'"`);
+            return NextResponse.json({
+              success: true,
+              message: 'Text copied to Windows clipboard.',
+            });
+          }
+
+          const { stdout } = await execPromise('powershell -NoProfile -Command "Get-Clipboard"');
+          return NextResponse.json({
+            success: true,
+            content: stdout.trim(),
+            message: `Clipboard content: "${stdout.trim().slice(0, 80)}"`,
+          });
+        }
+
+        return NextResponse.json({
+          success: true,
+          message: 'Clipboard action completed.',
+        });
+      } catch (clipErr: unknown) {
+        const msg = clipErr instanceof Error ? clipErr.message : 'Failed clipboard action';
+        return NextResponse.json({ success: false, error: msg }, { status: 500 });
+      }
+    }
+
     return NextResponse.json({
       success: true,
       message: `Action ${actionType} acknowledged.`,

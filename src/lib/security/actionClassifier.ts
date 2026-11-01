@@ -66,16 +66,89 @@ export class ActionClassifier {
       case 'CREATE_TASK':
       case 'READ_FILE':
       case 'CHAT_REPLY':
+      case 'VOLUME_CONTROL':
+      case 'MEDIA_CONTROL':
+      case 'WINDOW_CONTROL':
+      case 'TAKE_SCREENSHOT':
+      case 'OPEN_SPECIAL_FOLDER':
+      case 'CLIPBOARD_ACTION':
         return {
           riskLevel: 'LOW',
           requiresApproval: false,
           isReversible: true,
-          component: 'Application Interface',
-          reason: 'Standard navigation or information retrieval.',
-          consequences: 'Standard read-only or navigational action. No files will be modified.',
+          component: 'Application & System Controls',
+          reason: 'Standard navigation, system control, or information retrieval.',
+          consequences: 'Standard read-only or hardware state action. No files will be modified.',
           voicePromptHi: 'Kya main aage badhoon?',
           voicePromptEn: 'Proceed with standard action?',
         };
+
+      case 'CLOSE_APP': {
+        const appName = String(payload.appName || target || '').toLowerCase();
+        const criticalProcesses = ['explorer', 'csrss', 'svchost', 'services', 'lsass', 'smss', 'wininit', 'system'];
+        if (criticalProcesses.some((cp) => appName.includes(cp))) {
+          return {
+            riskLevel: 'HIGH',
+            requiresApproval: true,
+            isReversible: false,
+            component: 'Windows Process Manager',
+            reason: `Attempting to terminate critical system process: "${appName}".`,
+            consequences: 'Terminating this process may destabilize Windows and cause a blue screen crash.',
+            voicePromptHi: 'Yeh core system process hai. Isse band karne par computer crash ho sakta hai.',
+            voicePromptEn: 'This is a critical system process. Terminating it is blocked to avoid OS crash.',
+            isBlocked: true,
+            blockedReason: 'Terminating critical Windows system processes is blocked.',
+          };
+        }
+        return {
+          riskLevel: 'LOW',
+          requiresApproval: false,
+          isReversible: true,
+          component: 'Windows Desktop Manager',
+          reason: `Closing desktop application "${appName}".`,
+          consequences: 'The requested application will be closed.',
+          voicePromptHi: `Kya main "${appName}" band kar doon?`,
+          voicePromptEn: `Should I close "${appName}"?`,
+        };
+      }
+
+      case 'POWER_CONTROL': {
+        const pwrAction = String(payload.action || 'lock').toLowerCase();
+        if (pwrAction === 'lock') {
+          return {
+            riskLevel: 'LOW',
+            requiresApproval: false,
+            isReversible: true,
+            component: 'Windows Security Manager',
+            reason: 'Locking computer workstation.',
+            consequences: 'Screen will be locked. Password/PIN required to unlock.',
+            voicePromptHi: 'Computer lock kiya ja raha hai.',
+            voicePromptEn: 'Workstation will be locked.',
+          };
+        }
+        if (pwrAction === 'sleep') {
+          return {
+            riskLevel: 'MEDIUM',
+            requiresApproval: true,
+            isReversible: true,
+            component: 'Windows Power Manager',
+            reason: 'Putting computer into sleep mode.',
+            consequences: 'System will suspend state to RAM and enter low power mode.',
+            voicePromptHi: 'Kya main computer ko sleep mode mein daal doon?',
+            voicePromptEn: 'Should I put the computer to sleep?',
+          };
+        }
+        return {
+          riskLevel: 'HIGH',
+          requiresApproval: true,
+          isReversible: false,
+          component: 'Windows Power Manager',
+          reason: `System power alteration: ${pwrAction.toUpperCase()}.`,
+          consequences: 'All unsaved work will be lost. Computer will restart or power off.',
+          voicePromptHi: `Computer ${pwrAction} hone wala hai. Kya aap confirm karte hain?`,
+          voicePromptEn: `Are you sure you want to ${pwrAction} the computer?`,
+        };
+      }
 
       case 'CREATE_FILE':
         // If file already exists, it becomes overwrite (medium risk)

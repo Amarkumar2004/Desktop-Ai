@@ -513,7 +513,7 @@ function DashboardContent() {
       handleNavClick('Tasks');
     } else if (
       lower.startsWith('open ') ||
-      ['chrome', 'notepad', 'calc', 'calculator', 'settings', 'vscode', 'application', 'app', 'google', 'browser', 'paint'].includes(lower)
+      ['chrome', 'notepad', 'calc', 'calculator', 'settings', 'vscode', 'application', 'app', 'google', 'browser', 'paint', 'spotify', 'vlc', 'discord'].includes(lower)
     ) {
       const app = lower.replace(/^open\s+/, '').trim();
       fetch('/api/local/action', {
@@ -527,6 +527,54 @@ function DashboardContent() {
         })
         .catch(() => {});
       reply = `${ts} [APP] Launched "${app.toUpperCase()}" via Windows Desktop Launcher.`;
+    } else if (lower.startsWith('close ') || lower.startsWith('kill ')) {
+      const app = lower.replace(/^(close|kill)\s+/, '').trim();
+      fetch('/api/local/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actionType: 'CLOSE_APP', payload: { appName: app } }),
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.success) success('Closed', `Closed ${app.toUpperCase()} on Windows.`);
+          else errorToast('Close Failed', d.error || 'Failed to terminate app');
+        })
+        .catch(() => {});
+      reply = `${ts} [APP] Requested termination of "${app.toUpperCase()}".`;
+    } else if (lower === 'screenshot' || lower === 'screen capture') {
+      fetch('/api/local/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actionType: 'TAKE_SCREENSHOT', payload: {} }),
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.success) success('Screenshot Taken', d.message);
+        })
+        .catch(() => {});
+      reply = `${ts} [SCREENSHOT] Capturing desktop screen to Desktop folder...`;
+    } else if (lower.startsWith('volume ') || lower === 'mute') {
+      const volAction = lower.replace(/^volume\s+/, '').trim() || 'mute';
+      fetch('/api/local/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actionType: 'VOLUME_CONTROL', payload: { action: volAction } }),
+      }).catch(() => {});
+      reply = `${ts} [AUDIO] Dispatched volume action: "${volAction}".`;
+    } else if (lower === 'lock' || lower === 'lock pc') {
+      fetch('/api/local/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actionType: 'POWER_CONTROL', payload: { action: 'lock' } }),
+      }).catch(() => {});
+      reply = `${ts} [POWER] Workstation lock initiated.`;
+    } else if (lower === 'desktop' || lower === 'minimize all') {
+      fetch('/api/local/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actionType: 'WINDOW_CONTROL', payload: { action: 'show_desktop' } }),
+      }).catch(() => {});
+      reply = `${ts} [WINDOW] Show desktop dispatched.`;
     } else if (lower.startsWith('task add ')) {
       const title = cmd.slice(9).trim();
       if (title) {

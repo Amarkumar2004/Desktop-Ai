@@ -318,31 +318,42 @@ export class ToolExecutor implements IToolExecutor {
     }
 
     // -------------------------------------------------------------------------
-    // 8. OPEN_APP Action (Windows desktop applications: Chrome, Notepad, Calc)
+    // 8. PC CONTROL Actions (OPEN_APP, CLOSE_APP, VOLUME, MEDIA, SCREENSHOT, etc.)
     // -------------------------------------------------------------------------
-    if (actionUpper === 'OPEN_APP') {
-      const appName = String(payload.appName || payload.target || 'chrome');
+    const pcControlActions = [
+      'OPEN_APP',
+      'CLOSE_APP',
+      'VOLUME_CONTROL',
+      'MEDIA_CONTROL',
+      'WINDOW_CONTROL',
+      'TAKE_SCREENSHOT',
+      'POWER_CONTROL',
+      'OPEN_SPECIAL_FOLDER',
+      'CLIPBOARD_ACTION',
+    ];
+
+    if (pcControlActions.includes(actionUpper)) {
       try {
         if (typeof window !== 'undefined') {
           const res = await fetch('/api/local/action', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              actionType: 'OPEN_APP',
-              payload: { appName },
+              actionType: actionUpper,
+              payload: payload || {},
             }),
           });
           const data = await res.json();
           return {
             success: data.success,
-            message: data.message || `Launched ${appName}`,
+            message: data.message || `Executed ${actionUpper}`,
             result: data,
           };
         }
       } catch (err: unknown) {
         return {
           success: false,
-          message: `Failed to launch ${appName}: ${err instanceof Error ? err.message : String(err)}`,
+          message: `Failed ${actionUpper}: ${err instanceof Error ? err.message : String(err)}`,
         };
       }
     }

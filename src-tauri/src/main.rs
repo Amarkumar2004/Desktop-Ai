@@ -153,6 +153,51 @@ fn get_system_metrics(state: tauri::State<AppState>) -> Result<SystemMetrics, St
     })
 }
 
+#[tauri::command]
+fn execute_pc_action(action_type: String, target: Option<String>) -> Result<String, String> {
+    match action_type.to_uppercase().as_str() {
+        "LOCK" => {
+            #[cfg(target_os = "windows")]
+            {
+                let mut cmd = std::process::Command::new("rundll32.exe");
+                cmd.args(&["user32.dll,LockWorkStation"]);
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                cmd.spawn().map_err(|e| e.to_string())?;
+                Ok("Workstation locked.".to_string())
+            }
+            #[cfg(not(target_os = "windows"))]
+            Ok("Unsupported on this OS".to_string())
+        }
+        "SHOW_DESKTOP" => {
+            #[cfg(target_os = "windows")]
+            {
+                let mut cmd = std::process::Command::new("powershell");
+                cmd.args(&["-NoProfile", "-Command", "(New-Object -ComObject Shell.Application).MinimizeAll()"]);
+                cmd.creation_flags(0x08000000);
+                cmd.spawn().map_err(|e| e.to_string())?;
+                Ok("Desktop shown.".to_string())
+            }
+            #[cfg(not(target_os = "windows"))]
+            Ok("Unsupported on this OS".to_string())
+        }
+        "CLOSE_APP" => {
+            let app = target.unwrap_or_else(|| "notepad.exe".to_string());
+            #[cfg(target_os = "windows")]
+            {
+                let proc_name = if !app.ends_with(".exe") { format!("{}.exe", app) } else { app };
+                let mut cmd = std::process::Command::new("taskkill");
+                cmd.args(&["/IM", &proc_name, "/F"]);
+                cmd.creation_flags(0x08000000);
+                cmd.spawn().map_err(|e| e.to_string())?;
+                Ok(format!("Closed {}.", proc_name))
+            }
+            #[cfg(not(target_os = "windows"))]
+            Ok("Unsupported on this OS".to_string())
+        }
+        _ => Ok(format!("Action {} acknowledged", action_type))
+    }
+}
+
 fn main() {
     let sys = System::new_with_specifics(
         RefreshKind::new()
@@ -164,7 +209,7 @@ fn main() {
         .manage(AppState {
             sys: Mutex::new(sys),
         })
-        .invoke_handler(tauri::generate_handler![get_system_metrics])
+        .invoke_handler(tauri::generate_handler![get_system_metrics, execute_pc_action])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
