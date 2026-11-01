@@ -14,21 +14,26 @@ const DEFAULT_TASKS: TaskItem[] = INITIAL_TASKS.map((t) => ({
   completed: t.progress === 100,
 }));
 
+let memoryTasks: TaskItem[] | null = null;
+
 export function getStoredTasks(): TaskItem[] {
-  if (typeof window === 'undefined') return DEFAULT_TASKS;
+  if (typeof window === 'undefined') {
+    return memoryTasks || [...DEFAULT_TASKS];
+  }
   try {
     const raw = localStorage.getItem(STORAGE_KEY_TASKS);
     if (!raw) {
       localStorage.setItem(STORAGE_KEY_TASKS, JSON.stringify(DEFAULT_TASKS));
-      return DEFAULT_TASKS;
+      return [...DEFAULT_TASKS];
     }
     return JSON.parse(raw);
   } catch {
-    return DEFAULT_TASKS;
+    return memoryTasks || [...DEFAULT_TASKS];
   }
 }
 
 export function saveStoredTasks(tasks: TaskItem[]): void {
+  memoryTasks = tasks;
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEY_TASKS, JSON.stringify(tasks));
@@ -38,35 +43,54 @@ export function saveStoredTasks(tasks: TaskItem[]): void {
   }
 }
 
-/**
- * Retrieves tasks with Supabase cloud sync when configured, falling back to local cache.
- */
-export async function getTasks(): Promise<TaskItem[]> {
-  if (isSupabaseConfigured()) {
-    try {
-      const supabase = createClient();
-      if (supabase) {
-        const { data, error } = await supabase
-          .from('tasks')
-          .select('*')
-          .order('created_at', { ascending: false });
+export interface TaskFilterOptions {
+  userId?: string;
+  workspaceId?: string;
+}
 
-        if (!error && data && data.length > 0) {
-          const mapped: TaskItem[] = data.map((t: any) => ({
-            id: t.id,
-            title: t.title,
-            assignedAgent: (t.assigned_agent_id as any) || 'SUSI',
-            progress: t.progress ?? 0,
-            priority: (t.priority === 'urgent' ? 'Critical' : t.priority === 'high' ? 'High' : t.priority === 'low' ? 'Low' : 'Medium'),
-            category: 'Operations',
-            completed: (t.progress ?? 0) >= 100 || t.status === 'completed',
-          }));
-          saveStoredTasks(mapped);
-          return mapped;
-        }
+/**
+ * Retrieves tasks with real Supabase persistence when configured, falling back to local cache when offline.
+ */
+export async function getTasks(filter?: TaskFilterOptions): Promise<TaskItem[]> {
+  if (isSupabaseConfigured()) {
+    const supabase = createClient();
+    if (supabase) {
+      let query = supabase.from('tasks').select('*').order('created_at', { ascending: false });
+
+      if (filter?.userId) {
+        query = query.eq('user_id', filter.userId);
       }
-    } catch (err) {
-      console.warn('[taskService] Supabase fetch fallback to local cache:', err);
+      if (filter?.workspaceId) {
+        query = query.eq('workspace_id', filter.workspaceId);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        console.error('[taskService] Supabase fetch error:', error.message);
+        throw new Error(`Failed to fetch tasks from database: ${error.message} (${error.code})`);
+      }
+
+      if (data) {
+        const mapped: TaskItem[] = data.map((t: any) => ({
+          id: t.id,
+          title: t.title,
+          assignedAgent: (t.assigned_agent as any) || 'SUSI',
+          progress: t.progress ?? 0,
+          priority:
+            t.priority === 'urgent' || t.priority === 'Critical' || t.priority === 'critical'
+              ? 'Critical'
+              : t.priority === 'high' || t.priority === 'High'
+              ? 'High'
+              : t.priority === 'low' || t.priority === 'Low'
+              ? 'Low'
+              : 'Medium',
+          category: t.category || 'Operations',
+          completed: Boolean(t.completed) || (t.progress ?? 0) >= 100 || t.status === 'completed',
+        }));
+        saveStoredTasks(mapped);
+        return mapped;
+      }
     }
   }
 
@@ -74,91 +98,146 @@ export async function getTasks(): Promise<TaskItem[]> {
 }
 
 /**
- * Creates a task, persisting to Supabase when available and updating local cache.
+ * Creates a task, persisting to Supabase when configured and updating local cache.
  */
 export async function createTask(
-  data: Omit<TaskItem, 'id' | 'progress'> & { progress?: number }
+  data: Omit<TaskItem, 'id' | 'progress'> & {
+    id?: string;
+    progress?: number;
+    userId?: string;
+    workspaceId?: string;
+    description?: string;
+  }
 ): Promise<TaskItem> {
-  const tasks = getStoredTasks();
+  const taskId = data.id || `task-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const progress = data.progress ?? 0;
+  const isCompleted = progress >= 100;
+
   const newTask: TaskItem = {
-    id: `task-${Date.now()}`,
+    id: taskId,
     title: data.title,
-    assignedAgent: data.assignedAgent,
-    priority: data.priority,
+    assignedAgent: data.assignedAgent || 'SUSI',
+    priority: data.priority || 'Medium',
     category: data.category || 'Operations',
-    progress: data.progress ?? 0,
-    completed: (data.progress ?? 0) >= 100,
+    progress,
+    completed: isCompleted,
   };
 
-  const updated = [newTask, ...tasks];
-  saveStoredTasks(updated);
-
-  // Background Supabase persistence
+  // Real Supabase persistence
   if (isSupabaseConfigured()) {
-    try {
-      const supabase = createClient();
-      if (supabase) {
-        await (supabase as any).from('tasks').insert({
+    const supabase = createClient();
+    if (supabase) {
+      const { error } = await supabase
+        .from('tasks')
+        .insert({
+          id: newTask.id,
+          user_id: data.userId || null,
+          workspace_id: data.workspaceId || null,
           title: newTask.title,
+          description: data.description || null,
+          assigned_agent: newTask.assignedAgent,
+          priority: newTask.priority,
+          status: isCompleted ? 'completed' : 'in_progress',
+          category: newTask.category,
           progress: newTask.progress,
-          status: newTask.completed ? 'completed' : 'in_progress',
-          priority: newTask.priority === 'Critical' ? 'urgent' : newTask.priority.toLowerCase() as any,
-          assigned_agent_id: newTask.assignedAgent,
-        });
+          completed: isCompleted,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('[taskService] Failed to persist new task to Supabase:', error.message);
+        throw new Error(`Failed to persist task to database: ${error.message} (${error.code})`);
       }
-    } catch (err) {
-      console.warn('[taskService] Failed to persist new task to Supabase:', err);
     }
   }
+
+  const tasks = getStoredTasks();
+  const updated = [newTask, ...tasks.filter((t) => t.id !== newTask.id)];
+  saveStoredTasks(updated);
 
   return newTask;
 }
 
 /**
- * Updates a task locally and syncs to Supabase.
+ * Updates a task in Supabase and syncs to local cache.
  */
 export async function updateTask(
   taskId: string,
-  patch: Partial<TaskItem>
+  patch: Partial<TaskItem> & { status?: string; description?: string }
 ): Promise<TaskItem | null> {
   const tasks = getStoredTasks();
-  let updatedTask: TaskItem | null = null;
+  const existing = tasks.find((t) => t.id === taskId);
 
-  const updated = tasks.map((t) => {
-    if (t.id === taskId) {
-      updatedTask = { ...t, ...patch };
-      if (patch.progress !== undefined) {
-        updatedTask.completed = patch.progress >= 100;
+  const updatedTask: TaskItem = existing
+    ? {
+        ...existing,
+        ...patch,
+        completed:
+          patch.completed !== undefined
+            ? patch.completed
+            : patch.progress !== undefined
+            ? patch.progress >= 100
+            : existing.completed,
       }
-      return updatedTask;
-    }
-    return t;
-  });
+    : {
+        id: taskId,
+        title: patch.title || 'Updated Task',
+        assignedAgent: patch.assignedAgent || 'SUSI',
+        priority: patch.priority || 'Medium',
+        category: patch.category || 'Operations',
+        progress: patch.progress ?? 0,
+        completed: (patch.progress ?? 0) >= 100,
+      };
 
-  if (updatedTask) {
-    saveStoredTasks(updated);
-
-    if (isSupabaseConfigured()) {
-      try {
-        const supabase = createClient();
-        if (supabase) {
-          const dbPatch: any = {};
-          if (patch.title !== undefined) dbPatch.title = patch.title;
-          if (patch.progress !== undefined) {
-            dbPatch.progress = patch.progress;
-            dbPatch.status = patch.progress >= 100 ? 'completed' : 'in_progress';
-          }
-          await (supabase as any).from('tasks').update(dbPatch).eq('id', taskId);
+  if (isSupabaseConfigured()) {
+    const supabase = createClient();
+    if (supabase) {
+      const dbPatch: any = {};
+      if (patch.title !== undefined) dbPatch.title = patch.title;
+      if (patch.assignedAgent !== undefined) dbPatch.assigned_agent = patch.assignedAgent;
+      if (patch.priority !== undefined) dbPatch.priority = patch.priority;
+      if (patch.category !== undefined) dbPatch.category = patch.category;
+      if (patch.description !== undefined) dbPatch.description = patch.description;
+      if (patch.progress !== undefined) {
+        dbPatch.progress = patch.progress;
+        if (patch.completed === undefined) {
+          dbPatch.completed = patch.progress >= 100;
         }
-      } catch (err) {
-        console.warn('[taskService] Supabase task update notice:', err);
+      }
+      if (patch.completed !== undefined) {
+        dbPatch.completed = patch.completed;
+      }
+      if (patch.status !== undefined) {
+        dbPatch.status = patch.status;
+      } else if (patch.completed === true || (patch.progress !== undefined && patch.progress >= 100)) {
+        dbPatch.status = 'completed';
+        dbPatch.completed_at = new Date().toISOString();
+      } else if (patch.completed === false) {
+        dbPatch.status = 'in_progress';
+      }
+
+      const { error } = await supabase.from('tasks').update(dbPatch).eq('id', taskId);
+
+      if (error) {
+        console.error('[taskService] Failed to update task in Supabase:', error.message);
+        throw new Error(`Failed to update task in database: ${error.message} (${error.code})`);
       }
     }
   }
 
+  const updatedList = tasks.map((t) => (t.id === taskId ? updatedTask : t));
+  if (!tasks.some((t) => t.id === taskId)) {
+    updatedList.unshift(updatedTask);
+  }
+  saveStoredTasks(updatedList);
+
   return updatedTask;
 }
 
+/**
+ * Toggles a task between completed (100%) and active.
+ */
 export async function toggleTaskCompleted(taskId: string): Promise<TaskItem | null> {
   const tasks = getStoredTasks();
   const current = tasks.find((t) => t.id === taskId);
@@ -171,23 +250,26 @@ export async function toggleTaskCompleted(taskId: string): Promise<TaskItem | nu
   });
 }
 
+/**
+ * Deletes a task from Supabase and removes it from local cache.
+ */
 export async function deleteTask(taskId: string): Promise<boolean> {
-  const tasks = getStoredTasks();
-  const filtered = tasks.filter((t) => t.id !== taskId);
-  if (filtered.length !== tasks.length) {
-    saveStoredTasks(filtered);
-
-    if (isSupabaseConfigured()) {
-      try {
-        const supabase = createClient();
-        if (supabase) {
-          await (supabase as any).from('tasks').delete().eq('id', taskId);
-        }
-      } catch (err) {
-        console.warn('[taskService] Supabase task deletion notice:', err);
+  if (isSupabaseConfigured()) {
+    const supabase = createClient();
+    if (supabase) {
+      const { error } = await supabase.from('tasks').delete().eq('id', taskId);
+      if (error) {
+        console.error('[taskService] Failed to delete task in Supabase:', error.message);
+        throw new Error(`Failed to delete task from database: ${error.message} (${error.code})`);
       }
     }
-    return true;
   }
-  return false;
+
+  const tasks = getStoredTasks();
+  const filtered = tasks.filter((t) => t.id !== taskId);
+  const existed = filtered.length !== tasks.length;
+  if (existed) {
+    saveStoredTasks(filtered);
+  }
+  return existed;
 }

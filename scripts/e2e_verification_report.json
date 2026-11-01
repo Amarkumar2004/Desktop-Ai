@@ -32,8 +32,8 @@
     "category": "Security",
     "test": "Establish Authenticated Desktop Session via Protected Proof",
     "passed": true,
-    "actualResult": "HTTP Status 200: Session ID \"68496d5c-b2b9-4b64-9963-66c2e5a56f21\", Scoped Token (length: 64), Expires in 60m",
-    "evidence": "{\"success\":true,\"sessionId\":\"68496d5c-b2b9-4b64-9963-66c2e5a56f21\",\"expiresAt\":1793524419803}"
+    "actualResult": "HTTP Status 200: Session ID \"efa78de4-bd48-40f6-a6be-dffca538d9fb\", Scoped Token (length: 64), Expires in 60m",
+    "evidence": "{\"success\":true,\"sessionId\":\"efa78de4-bd48-40f6-a6be-dffca538d9fb\",\"expiresAt\":1793525564759}"
   },
   {
     "category": "Security",
@@ -46,8 +46,8 @@
     "category": "System Telemetry",
     "test": "Real Hardware Metrics (CPU, RAM, Uptime)",
     "passed": true,
-    "actualResult": "CPU: 27%, RAM: 77% (12.1/15.7 GB), Uptime: 8d 13h, Platform: win32",
-    "evidence": "{\"success\":true,\"cpu\":27,\"memory\":77,\"usedRamGb\":12.1,\"totalRamGb\":15.7,\"uptime\":\"8d 13h\",\"platform\":\"win32\",\"arch\":\"x64\",\"hostname\":\"Amar\"}",
+    "actualResult": "CPU: 27%, RAM: 87% (13.6/15.7 GB), Uptime: 8d 13h, Platform: win32",
+    "evidence": "{\"success\":true,\"cpu\":27,\"memory\":87,\"usedRamGb\":13.6,\"totalRamGb\":15.7,\"uptime\":\"8d 13h\",\"platform\":\"win32\",\"arch\":\"x64\",\"hostname\":\"Amar\"}",
     "limitations": "CPU percent is instantaneous single-sample load across active cores."
   },
   {
@@ -83,8 +83,8 @@
     "category": "Windows Automation",
     "test": "Safe Stdin Clipboard Write & Readback",
     "passed": true,
-    "actualResult": "Written: \"SUSI_E2E_VERIFICATION_TOKEN_1793520819905\", Readback: \"SUSI_E2E_VERIFICATION_TOKEN_1793520819905\"",
-    "evidence": "{\"writeData\":{\"success\":true,\"message\":\"Text safely copied to Windows clipboard.\"},\"readData\":{\"success\":true,\"content\":\"SUSI_E2E_VERIFICATION_TOKEN_1793520819905\",\"message\":\"Clipboard content: \\\"SUSI_E2E_VERIFICATION_TOKEN_1793520819905\\\"\"}}"
+    "actualResult": "Written: \"SUSI_E2E_VERIFICATION_TOKEN_1793521964874\", Readback: \"SUSI_E2E_VERIFICATION_TOKEN_1793521964874\"",
+    "evidence": "{\"writeData\":{\"success\":true,\"message\":\"Text safely copied to Windows clipboard.\"},\"readData\":{\"success\":true,\"content\":\"SUSI_E2E_VERIFICATION_TOKEN_1793521964874\",\"message\":\"Clipboard content: \\\"SUSI_E2E_VERIFICATION_TOKEN_1793521964874\\\"\"}}"
   },
   {
     "category": "Windows Automation",
@@ -104,8 +104,8 @@
     "category": "Windows Automation",
     "test": "Reject Close on Non-Existent Process (404)",
     "passed": true,
-    "actualResult": "HTTP Status 404: success=false, code=PROCESS_NOT_FOUND, error=\"Process \"ghost_proc_not_running_1793520823883.exe\" could not be terminated (exit code 128). It may not be currently running.\"",
-    "evidence": "{\"success\":false,\"error\":\"Process \\\"ghost_proc_not_running_1793520823883.exe\\\" could not be terminated (exit code 128). It may not be currently running.\",\"code\":\"PROCESS_NOT_FOUND\"}",
+    "actualResult": "HTTP Status 404: success=false, code=PROCESS_NOT_FOUND, error=\"Process \"ghost_proc_not_running_1793521968641.exe\" could not be terminated (exit code 128). It may not be currently running.\"",
+    "evidence": "{\"success\":false,\"error\":\"Process \\\"ghost_proc_not_running_1793521968641.exe\\\" could not be terminated (exit code 128). It may not be currently running.\",\"code\":\"PROCESS_NOT_FOUND\"}",
     "limitations": "taskkill exit status is verified: non-zero return codes reject with PROCESS_NOT_FOUND."
   },
   {
@@ -127,14 +127,14 @@
     "test": "Idempotent Deduplication of Double Triggers",
     "passed": true,
     "actualResult": "Trigger 1: success=true, Trigger 2 (immediate): isDuplicate=true, message=\"Action NAVIGATE_TAB already completed recently (deduplicated).\"",
-    "evidence": "{\"trigger1\":{\"success\":true,\"actionId\":\"act_1793520824209_w7cb9r\",\"message\":\"Navigated to e2e_hardened_tab view.\",\"status\":\"completed\",\"result\":{\"tab\":\"e2e_hardened_tab\"}},\"trigger2\":{\"success\":true,\"actionId\":\"act_1793520824209_w7cb9r\",\"message\":\"Action NAVIGATE_TAB already completed recently (deduplicated).\",\"status\":\"completed\",\"isDuplicate\":true}}"
+    "evidence": "{\"trigger1\":{\"success\":true,\"actionId\":\"act_1793521968914_48yaq9\",\"message\":\"Navigated to e2e_hardened_tab view.\",\"status\":\"completed\",\"result\":{\"tab\":\"e2e_hardened_tab\"}},\"trigger2\":{\"success\":true,\"actionId\":\"act_1793521968914_48yaq9\",\"message\":\"Action NAVIGATE_TAB already completed recently (deduplicated).\",\"status\":\"completed\",\"isDuplicate\":true}}"
   },
   {
     "category": "Task Orchestrator",
     "test": "Multi-Step Execution DAG with Dependencies",
     "passed": true,
-    "actualResult": "Task 1: \"OPEN_APP: chrome\", Task 2: \"OPEN_URL:\" (dependsOn: [\"otask_1793520824211_0_bspo\"])",
-    "evidence": "[{\"id\":\"otask_1793520824211_0_bspo\",\"title\":\"OPEN_APP: chrome\"},{\"id\":\"otask_1793520824212_1_2ogu\",\"title\":\"OPEN_URL:\",\"dependsOn\":[\"otask_1793520824211_0_bspo\"]}]"
+    "actualResult": "Task 1: \"OPEN_APP: chrome\", Task 2: \"OPEN_URL:\" (dependsOn: [\"otask_1793521968915_0_xiqx\"])",
+    "evidence": "[{\"id\":\"otask_1793521968915_0_xiqx\",\"title\":\"OPEN_APP: chrome\"},{\"id\":\"otask_1793521968916_1_8w3a\",\"title\":\"OPEN_URL:\",\"dependsOn\":[\"otask_1793521968915_0_xiqx\"]}]"
   },
   {
     "category": "Task Orchestrator",
@@ -154,7 +154,7 @@
     "category": "Persistence",
     "test": "Database Query Fallback without Crash",
     "passed": true,
-    "actualResult": "Retrieved 8 tasks, created new task \"E2E Verified Offline Task\" (ID: task-1793520824213)",
-    "evidence": "{\"taskCount\":8,\"newTaskId\":\"task-1793520824213\"}"
+    "actualResult": "Retrieved 8 tasks, created new task \"E2E Verified Offline Task\" (ID: task-1793521968917-uky9b)",
+    "evidence": "{\"taskCount\":8,\"newTaskId\":\"task-1793521968917-uky9b\"}"
   }
 ]

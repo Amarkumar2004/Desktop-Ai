@@ -208,7 +208,7 @@ export default function OracleVoiceCard({
           assignedAgent: (res.action.payload.agent as 'LEX' | 'SUSI' | 'SPY' | 'YORU') || res.assignedAgent || 'SUSI',
           priority: (res.action.payload.priority as 'Critical' | 'High' | 'Medium' | 'Low') || 'High',
           category: 'Operations',
-        });
+        }).catch((err) => console.error('[VoiceCard] Task creation notice:', err));
         propsRef.current.success('Task Created', `"${res.action.payload.title}" dispatched.`);
       } else if (res.action?.type === 'CREATE_FILE' && res.action.payload) {
         propsRef.current.success('File Created', `Created ${(res.action.payload.filename as string)} in workspace.`);

@@ -240,7 +240,7 @@ export class ToolExecutor implements IToolExecutor {
       const priority = (payload.priority as 'Critical' | 'High' | 'Medium' | 'Low') || 'High';
 
       try {
-        const created = createTask({
+        const created = await createTask({
           title,
           assignedAgent,
           priority,

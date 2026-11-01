@@ -5,3 +5,7 @@ export * from './taskService';
 export * from './notificationService';
 export * from './aiProviderService';
 export * from './localActionService';
+export * from './userSettingsService';
+export * from './conversationService';
+export * from './providerConnectionService';
+export * from './actionLogService';

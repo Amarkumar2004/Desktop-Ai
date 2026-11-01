@@ -6,7 +6,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useToast } from '@/lib/toast/ToastContext';
 import {
   getStoredTasks,
+  getTasks,
   createTask as apiCreateTask,
+  updateTask as apiUpdateTask,
   deleteTask as apiDeleteTask,
   toggleTaskCompleted as apiToggleTask,
   saveStoredTasks,
@@ -277,6 +279,7 @@ function DashboardContent() {
   useEffect(() => {
     const loadedTasks = getStoredTasks();
     setTasks(loadedTasks);
+    getTasks().then((db) => { if (db) setTasks(db); }).catch(() => {});
 
     const loadedAgents = getStoredAgents();
     setAgents(loadedAgents);
@@ -436,6 +439,7 @@ function DashboardContent() {
 
     setTasks(updatedTasks);
     saveStoredTasks(updatedTasks);
+    apiToggleTask(id).catch(() => {});
 
     if (wasCompleted) {
       info('Task Reopened', `"${taskName}" moved back to active queue.`);
@@ -464,9 +468,9 @@ function DashboardContent() {
   const handleBoostTask = (id: string) => {
     const ts = getConsoleTimestamp();
     const taskItem = tasks.find((t) => t.id === id);
+    const nextVal = Math.min(100, (taskItem?.progress || 0) + 15);
     const updatedTasks = tasks.map((t) => {
       if (t.id === id) {
-        const nextVal = Math.min(100, t.progress + 15);
         return { ...t, progress: nextVal, completed: nextVal === 100 };
       }
       return t;
@@ -474,6 +478,7 @@ function DashboardContent() {
 
     setTasks(updatedTasks);
     saveStoredTasks(updatedTasks);
+    apiUpdateTask(id, { progress: nextVal, completed: nextVal === 100 }).catch(() => {});
 
     info('Task Priority Boosted', `+15% compute allocated to "${taskItem?.title || id}"`);
     setConsoleLogs((prev) => [
@@ -488,6 +493,7 @@ function DashboardContent() {
     const updatedTasks = tasks.filter((t) => t.id !== id);
     setTasks(updatedTasks);
     saveStoredTasks(updatedTasks);
+    apiDeleteTask(id).catch(() => {});
 
     info('Task Removed', `"${taskItem?.title || id}" removed from queue.`);
     setConsoleLogs((prev) => [
@@ -639,6 +645,7 @@ function DashboardContent() {
     const updated = [created, ...tasks];
     setTasks(updated);
     saveStoredTasks(updated);
+    apiCreateTask(created).catch(() => {});
 
     success('Task Dispatched!', `"${created.title}" assigned to ${created.assignedAgent}`);
 
