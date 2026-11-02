@@ -224,11 +224,10 @@ export class ToolExecutor implements IToolExecutor {
             result: createData,
           };
         }
-      } catch {
+      } catch (err: unknown) {
         return {
-          success: true,
-          message: `File template "${filename}" staged for review.`,
-          result: { filename },
+          success: false,
+          message: `File creation failed: ${err instanceof Error ? err.message : String(err)}`,
         };
       }
     }
@@ -414,9 +413,8 @@ export class ToolExecutor implements IToolExecutor {
     }
 
     return {
-      success: true,
-      message: `Action ${actionType} completed.`,
-      result: payload,
+      success: false,
+      message: `Unsupported action type: ${actionUpper || '(empty)'}. No action was executed.`,
     };
   }
 }
