@@ -35,7 +35,7 @@ interface WorkforceAgentsViewProps {
   onNavigateToTown: () => void;
 }
 
-// Live simulated sub-activities and execution logs per agent
+// Sample activity templates per agent (not live execution telemetry)
 const AGENT_SUB_ACTIVITIES: Record<
   AgentId,
   {
@@ -104,21 +104,21 @@ const AGENT_SUB_ACTIVITIES: Record<
     ],
     hardware: { cpu: 22, memory: '2.9 / 8.0 GB', temp: '20.1°C', throughput: '850 MB/s' },
   },
-  yoru: {
-    stepTitle: 'Autonomous Vector Component & Asset Layout Engine',
+  euro: {
+    stepTitle: 'Research Analysis & Insight Synthesis',
     stepIndex: 1,
     totalSteps: 4,
     steps: [
-      { text: 'Sync token system with Tailwind palette configuration', done: true },
-      { text: 'Awaiting next design generation queue request', done: false, inProgress: true },
-      { text: 'Render high-resolution SVG icon sets & responsive tiles', done: false },
-      { text: 'Export production-ready canvas UI components', done: false },
+      { text: 'Review research inputs and source quality', done: true },
+      { text: 'Analyze findings and identify patterns', done: false, inProgress: true },
+      { text: 'Cross-check evidence and validate conclusions', done: false },
+      { text: 'Publish structured analysis report', done: false },
     ],
     liveLogs: [
-      { time: '11:58:05', text: '> canvas_render_pipeline::init(engine="WebGL-2D")', type: 'cmd' },
-      { time: '11:58:09', text: '> Design tokens synchronized: 64 color ramps cached', type: 'info' },
-      { time: '11:58:15', text: '> Standby mode: 60 FPS viewport rendering ready', type: 'success' },
-      { time: '11:58:21', text: '> Listening on /api/design-queue for incoming tickets', type: 'info' },
+      { time: '11:58:05', text: '> analysis_pipeline::initialize(mode="evidence-review")', type: 'cmd' },
+      { time: '11:58:09', text: '> Research inputs indexed for analysis', type: 'info' },
+      { time: '11:58:15', text: '> Evidence validation stage ready', type: 'success' },
+      { time: '11:58:21', text: '> Awaiting analysis tasks from the shared queue', type: 'info' },
     ],
     hardware: { cpu: 14, memory: '4.1 / 8.0 GB', temp: '21.0°C', throughput: '420 MB/s' },
   },
@@ -128,7 +128,7 @@ const AGENT_SKILLS: Record<AgentId, string[]> = {
   lex: ['Deep Neural Reasoning', 'HNSW Vector Search', 'Document RAG Ingestion', 'Semantic Clustering', 'Protocol Synthesis'],
   susi: ['Swarm Orchestration', 'Multi-Region Sharding', 'Kafka Event Pipelines', 'Task Load Balancing', 'Neural Fine-Tuning'],
   spy: ['Zero-Trust Defense', 'OWASP Penetration Guard', 'TLS 1.3 Cryptography', 'Anomaly Detection', 'Firewall Inspection'],
-  yoru: ['Vector Graphic Engine', 'Design System Tokens', 'WebGL Canvas Shaders', 'Figma API Bridge', 'UI/UX Generation'],
+  euro: ['Data Analysis', 'Pattern Detection', 'Research Synthesis', 'Insight Reporting', 'Decision Support'],
 };
 
 export default function WorkforceAgentsView({
@@ -147,7 +147,7 @@ export default function WorkforceAgentsView({
     lex: 'activity',
     susi: 'activity',
     spy: 'activity',
-    yoru: 'activity',
+    euro: 'activity',
   });
 
   // Filtered agents

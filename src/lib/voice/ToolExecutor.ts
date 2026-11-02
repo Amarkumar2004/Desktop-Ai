@@ -218,6 +218,13 @@ export class ToolExecutor implements IToolExecutor {
             }),
           });
           const createData = await createRes.json();
+          if (!createRes.ok || !createData?.success) {
+            return {
+              success: false,
+              message: createData?.error || createData?.message || `File creation failed (HTTP ${createRes.status}).`,
+              result: createData,
+            };
+          }
           return {
             success: true,
             message: createData.message || `File template "${filename}" generated.`,
@@ -237,7 +244,7 @@ export class ToolExecutor implements IToolExecutor {
     // -------------------------------------------------------------------------
     if (actionUpper === 'CREATE_TASK') {
       const title = (payload.title as string) || 'Autonomous Task';
-      const assignedAgent = (payload.agent as 'LEX' | 'SUSI' | 'SPY' | 'YORU') || 'SUSI';
+      const assignedAgent = (payload.agent as 'LEX' | 'SUSI' | 'SPY' | 'EURO') || 'SUSI';
       const priority = (payload.priority as 'Critical' | 'High' | 'Medium' | 'Low') || 'High';
 
       try {
@@ -279,11 +286,21 @@ export class ToolExecutor implements IToolExecutor {
     // 6. RUN_DIAGNOSTICS & SYSTEM_INFO Actions (Real Live Telemetry)
     // -------------------------------------------------------------------------
     if (actionUpper === 'RUN_DIAGNOSTICS') {
-      return {
-        success: true,
-        message: 'Security & fleet diagnostic probe completed: all nodes optimal.',
-        result: { status: 'healthy', nodesOnline: 4 },
-      };
+      // Do not fabricate fleet health; report only verified desktop telemetry.
+      const invoke = typeof window !== 'undefined' ? (window as any).__TAURI__?.invoke : undefined;
+      if (typeof invoke !== 'function') {
+        return { success: false, message: 'Diagnostics unavailable: desktop telemetry bridge is not connected.' };
+      }
+      try {
+        const metrics = await invoke('get_system_metrics');
+        return {
+          success: true,
+          message: 'Desktop telemetry collected; this is not a full security or agent-fleet diagnostic.',
+          result: { telemetry: metrics, diagnosticScope: 'system-telemetry-only' },
+        };
+      } catch (err: unknown) {
+        return { success: false, message: `Diagnostics unavailable: ${err instanceof Error ? err.message : String(err)}` };
+      }
     }
 
     if (actionUpper === 'SYSTEM_INFO') {
@@ -414,7 +431,7 @@ export class ToolExecutor implements IToolExecutor {
 
     return {
       success: false,
-      message: `Unsupported action type: ${actionUpper || '(empty)'}. No action was executed.`,
+      message: `Unsupported action type: ${actionType || actionUpper || '(empty)'}. No operation was executed.`,
     };
   }
 }
