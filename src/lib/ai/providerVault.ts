@@ -52,7 +52,9 @@ export async function persistCredentialSecure(key: string, secret: string): Prom
     console.error('[ProviderVault] Failed to save credential in Windows Credential Manager:', err);
     throw err;
   }
-  return true;
+  // Browser mode has no secure persistent credential store. Never report success:
+  // saveStoredProviderConnections must keep the secret out of localStorage and fail closed.
+  return false;
 }
 
 /**
@@ -96,7 +98,8 @@ export async function deleteCredentialSecure(key: string): Promise<boolean> {
   } catch (err) {
     console.warn('[ProviderVault] Could not delete credential from Windows Credential Manager:', err);
   }
-  return true;
+  // No native credential store is available in a regular browser session.
+  return false;
 }
 
 /**
@@ -165,7 +168,10 @@ export async function saveStoredProviderConnections(
       if (conn.rawKey) {
         memorySecretVault.set(conn.id, conn.rawKey);
         try {
-          await persistCredentialSecure(conn.id, conn.rawKey);
+          const persisted = await persistCredentialSecure(conn.id, conn.rawKey);
+          if (!persisted) {
+            throw new Error('Secure credential storage is unavailable in this environment.');
+          }
         } catch (credErr) {
           console.error(`Failed to persist credential for provider "${conn.providerLabel}":`, credErr);
           throw new Error(`Credential Manager persistence failed for "${conn.providerLabel}"`);
