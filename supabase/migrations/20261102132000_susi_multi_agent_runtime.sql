@@ -35,7 +35,26 @@ ALTER TABLE public.agent_memory ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS agent_runs_user_all ON public.agent_runs;
 CREATE POLICY agent_runs_user_all ON public.agent_runs FOR ALL TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
 DROP POLICY IF EXISTS agent_messages_user_all ON public.agent_messages;
-CREATE POLICY agent_messages_user_all ON public.agent_messages FOR ALL TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+CREATE POLICY agent_messages_user_all ON public.agent_messages
+ FOR ALL TO authenticated
+ USING (
+   user_id = auth.uid()
+   AND EXISTS (
+     SELECT 1 FROM public.agent_runs AS own_run
+     WHERE own_run.id = agent_messages.run_id
+       AND own_run.task_id = agent_messages.task_id
+       AND own_run.user_id = auth.uid()
+   )
+ )
+ WITH CHECK (
+   user_id = auth.uid()
+   AND EXISTS (
+     SELECT 1 FROM public.agent_runs AS own_run
+     WHERE own_run.id = agent_messages.run_id
+       AND own_run.task_id = agent_messages.task_id
+       AND own_run.user_id = auth.uid()
+   )
+ );
 DROP POLICY IF EXISTS agent_memory_user_all ON public.agent_memory;
 CREATE POLICY agent_memory_user_all ON public.agent_memory FOR ALL TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
 DROP TRIGGER IF EXISTS trg_agent_runs_updated_at ON public.agent_runs;
