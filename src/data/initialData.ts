@@ -65,8 +65,8 @@ export const INITIAL_AGENTS: Agent[] = [
     coordinates: { x: 380, y: 345 },
   },
   {
-    id: 'yoru',
-    name: 'YORU',
+    id: 'euro',
+    name: 'EURO',
     role: 'Creative & UI/UX Synthesis',
     title: 'Visual Assets Engine',
     status: 'Idle',
@@ -131,7 +131,7 @@ export const INITIAL_TASKS: Task[] = [
     id: 'tsk-004',
     title: 'Content Generation',
     description: 'Generate high-resolution marketing assets and responsive SVG iconography for next release banner.',
-    assignedAgent: 'yoru',
+    assignedAgent: 'euro',
     progress: 20,
     status: 'Active',
     priority: 'Low',
@@ -366,7 +366,7 @@ export const ROOMS_DATA: Record<string, RoomDetails> = {
     themeColor: '#10B981',
     bgClass: 'bg-emerald-50/50',
     borderClass: 'border-emerald-200',
-    assignedAgentId: 'yoru',
+    assignedAgentId: 'euro',
     description: 'Generative design workspace handling automated UI component generation, palette curation, and visual rendering.',
     stats: [
       { label: 'Render Speed', value: '60 FPS' },

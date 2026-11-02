@@ -7,7 +7,7 @@ const STORAGE_KEY_TASKS = 'susi_ai_tasks_v2';
 const DEFAULT_TASKS: TaskItem[] = INITIAL_TASKS.map((t) => ({
   id: t.id,
   title: t.title,
-  assignedAgent: (t.assignedAgent as 'LEX' | 'SUSI' | 'SPY' | 'YORU') || 'SUSI',
+  assignedAgent: (t.assignedAgent as 'LEX' | 'SUSI' | 'SPY' | 'EURO') || 'SUSI',
   progress: t.progress,
   priority: (t.priority as 'High' | 'Critical' | 'Medium' | 'Low') || 'Medium',
   category: t.category || 'System',

@@ -32,7 +32,7 @@ export interface ExtendedTaskItem {
   id: string;
   title: string;
   description?: string;
-  assignedAgent: 'LEX' | 'SUSI' | 'SPY' | 'YORU' | 'lex' | 'susi' | 'spy' | 'yoru';
+  assignedAgent: 'LEX' | 'SUSI' | 'SPY' | 'EURO' | 'lex' | 'susi' | 'spy' | 'euro';
   progress: number;
   priority: 'Critical' | 'High' | 'Medium' | 'Low';
   category: string;
@@ -48,7 +48,7 @@ interface TaskQueueViewProps {
   onCompleteTask: (taskId: string) => void;
   onBoostTask: (taskId: string) => void;
   onDeleteTask: (taskId: string) => void;
-  onReassignTask?: (taskId: string, newAgent: 'LEX' | 'SUSI' | 'SPY' | 'YORU') => void;
+  onReassignTask?: (taskId: string, newAgent: 'LEX' | 'SUSI' | 'SPY' | 'EURO') => void;
   onOpenCreateTask: () => void;
   onNavigateToAgents: () => void;
 }
@@ -114,7 +114,7 @@ export default function TaskQueueView({
         return { bg: 'bg-blue-50 text-blue-800 border-blue-200', dot: 'bg-blue-500' };
       case 'spy':
         return { bg: 'bg-amber-50 text-amber-800 border-amber-200', dot: 'bg-amber-500' };
-      case 'yoru':
+      case 'euro':
         return { bg: 'bg-emerald-50 text-emerald-800 border-emerald-200', dot: 'bg-emerald-500' };
       default:
         return { bg: 'bg-stone-50 text-stone-800 border-stone-200', dot: 'bg-stone-500' };
@@ -289,7 +289,7 @@ export default function TaskQueueView({
             <option value="LEX">LEX (Research)</option>
             <option value="SUSI">SUSI (Orchestrator)</option>
             <option value="SPY">SPY (Security)</option>
-            <option value="YORU">YORU (Creative)</option>
+            <option value="YORU">EURO (Analysis)</option>
           </select>
 
           {/* Priority Filter */}
@@ -692,7 +692,7 @@ function TaskCardItem({
   onCompleteTask: (id: string) => void;
   onBoostTask: (id: string) => void;
   onDeleteTask: (id: string) => void;
-  onReassignTask?: (id: string, newAgent: 'LEX' | 'SUSI' | 'SPY' | 'YORU') => void;
+  onReassignTask?: (id: string, newAgent: 'LEX' | 'SUSI' | 'SPY' | 'EURO') => void;
   getAgentColorStyles: (agent: string) => { bg: string; dot: string };
   getCategoryIcon: (category: string) => React.ReactNode;
 }) {
