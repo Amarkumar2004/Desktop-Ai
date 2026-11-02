@@ -289,7 +289,7 @@ export default function TaskQueueView({
             <option value="LEX">LEX (Research)</option>
             <option value="SUSI">SUSI (Orchestrator)</option>
             <option value="SPY">SPY (Security)</option>
-            <option value="YORU">EURO (Analysis)</option>
+            <option value="EURO">EURO (Analysis)</option>
           </select>
 
           {/* Priority Filter */}

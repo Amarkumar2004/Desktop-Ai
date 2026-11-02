@@ -75,7 +75,7 @@ export const INITIAL_AGENTS: Agent[] = [
     bgLight: 'bg-emerald-50',
     borderLight: 'border-emerald-200',
     textColor: 'text-emerald-700',
-    avatarSeed: 'yoru_green_hair',
+    avatarSeed: 'euro_amber_hair',
     room: 'creative-studio',
     specialty: 'Design Token Evolution, Canvas Graphics, Layout Layouting',
     efficiency: 96.5,
