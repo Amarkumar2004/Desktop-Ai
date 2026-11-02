@@ -32,8 +32,13 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_user_agent ON public.agent_memory(us
 ALTER TABLE public.agent_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_memory ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS agent_runs_user_all ON public.agent_runs;
 CREATE POLICY agent_runs_user_all ON public.agent_runs FOR ALL TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS agent_messages_user_all ON public.agent_messages;
 CREATE POLICY agent_messages_user_all ON public.agent_messages FOR ALL TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+DROP POLICY IF EXISTS agent_memory_user_all ON public.agent_memory;
 CREATE POLICY agent_memory_user_all ON public.agent_memory FOR ALL TO authenticated USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+DROP TRIGGER IF EXISTS trg_agent_runs_updated_at ON public.agent_runs;
 CREATE TRIGGER trg_agent_runs_updated_at BEFORE UPDATE ON public.agent_runs FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS trg_agent_memory_updated_at ON public.agent_memory;
 CREATE TRIGGER trg_agent_memory_updated_at BEFORE UPDATE ON public.agent_memory FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
