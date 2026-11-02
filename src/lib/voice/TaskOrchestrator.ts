@@ -159,7 +159,11 @@ export class TaskOrchestrator {
       if (task.status === 'running') {
         console.warn(`[TaskOrchestrator] Task ${task.taskId} (${task.actionType}) timed out after 15s.`);
         task.abortController?.abort();
-        this.handleTaskFailure(taskId, 'Action execution timed out (15s limit reached).');
+        task.status = 'cancelled';
+        task.error = 'Action execution timed out (15s limit reached).';
+        task.completedAt = new Date().toISOString();
+        this.notify();
+        this.cancelDependents(taskId, `Prerequisite task "${task.title}" timed out.`);
       }
     }, 15000);
     this.activeTimeouts.set(taskId, timeoutId);
@@ -239,13 +243,25 @@ export class TaskOrchestrator {
   }
 
   private cancelDependents(failedTaskId: string, reason: string): void {
-    this.tasks.forEach((task) => {
-      if (task.status === 'pending' && task.dependsOn?.includes(failedTaskId)) {
-        task.status = 'cancelled';
-        task.error = reason;
-        task.abortController?.abort();
-      }
-    });
+    const queue = [failedTaskId];
+    const visited = new Set<string>(queue);
+    while (queue.length > 0) {
+      const prerequisiteId = queue.shift()!;
+      this.tasks.forEach((task) => {
+        if (
+          task.status === 'pending' &&
+          task.dependsOn?.includes(prerequisiteId) &&
+          !visited.has(task.taskId)
+        ) {
+          visited.add(task.taskId);
+          queue.push(task.taskId);
+          task.status = 'cancelled';
+          task.error = reason;
+          task.completedAt = new Date().toISOString();
+          task.abortController?.abort();
+        }
+      });
+    }
     this.notify();
   }
 
@@ -275,6 +291,7 @@ export class TaskOrchestrator {
         task.abortController?.abort();
         const timeout = this.activeTimeouts.get(task.taskId);
         if (timeout) clearTimeout(timeout);
+        ActionPipeline.cancelAction(task.taskId, 'All tasks cancelled');
       }
     });
     this.activeTimeouts.clear();
