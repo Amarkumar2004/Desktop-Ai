@@ -235,5 +235,5 @@ export interface IAIModelRouter {
 }
 
 export interface IToolExecutor {
-  execute(actionType: string, payload: Record<string, unknown>, requiresApproval?: boolean): Promise<{ success: boolean; message: string; result?: unknown }>;
+  execute(actionType: string, payload: Record<string, unknown>, requiresApproval?: boolean, signal?: AbortSignal): Promise<{ success: boolean; message: string; result?: unknown }>;
 }

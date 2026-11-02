@@ -150,7 +150,7 @@ export class TaskOrchestrator {
 
     task.status = 'running';
     task.startedAt = new Date().toISOString();
-    task.progress = 25;
+    task.progress = 0;
     task.abortController = new AbortController();
     this.notify();
 
@@ -171,6 +171,7 @@ export class TaskOrchestrator {
         type: task.actionType,
         payload: task.payload,
         source: 'orchestrator',
+        signal: task.abortController?.signal,
       });
 
       clearTimeout(timeoutId);
@@ -203,6 +204,7 @@ export class TaskOrchestrator {
   private async handleTaskFailure(taskId: string, errorMsg: string): Promise<void> {
     const task = this.tasks.get(taskId);
     if (!task) return;
+    if (task.status === 'cancelled') return;
 
     if (task.retryCount < task.maxRetries && task.status !== 'cancelled') {
       task.retryCount += 1;

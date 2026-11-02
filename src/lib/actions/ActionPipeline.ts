@@ -27,6 +27,7 @@ export interface PipelineActionRequest {
   requiresApproval?: boolean;
   source?: 'voice' | 'chat' | 'orchestrator' | 'ui';
   idempotencyKey?: string;
+  signal?: AbortSignal;
 }
 
 export interface PipelineActionState {
@@ -59,6 +60,7 @@ class ActionPipelineManager {
   private inFlightPromises: Map<string, Promise<PipelineActionResult>> = new Map();
   private listeners: Set<(states: PipelineActionState[]) => void> = new Set();
   private toolExecutor: ToolExecutor;
+  private abortControllers: Map<string, AbortController> = new Map();
 
   // 4-second deduplication window for identical non-unique triggers
   private readonly IDEMPOTENCY_WINDOW_MS = 4000;
@@ -160,7 +162,12 @@ class ActionPipelineManager {
     this.notify();
 
     // Create execution promise
-    const executionPromise = this.executeInternal(state, idempotencyKey, req.requiresApproval);
+    const controller = new AbortController();
+    this.abortControllers.set(actionId, controller);
+    const onAbort = () => controller.abort();
+    req.signal?.addEventListener('abort', onAbort, { once: true });
+    if (req.signal?.aborted) controller.abort();
+    const executionPromise = this.executeInternal(state, idempotencyKey, req.requiresApproval, controller.signal);
     this.inFlightPromises.set(actionId, executionPromise);
 
     try {
@@ -168,13 +175,16 @@ class ActionPipelineManager {
       return result;
     } finally {
       this.inFlightPromises.delete(actionId);
+      this.abortControllers.delete(actionId);
+      req.signal?.removeEventListener('abort', onAbort);
     }
   }
 
   private async executeInternal(
     state: PipelineActionState,
     idempotencyKey: string,
-    requiresApproval = false
+    requiresApproval = false,
+    signal?: AbortSignal
   ): Promise<PipelineActionResult> {
     state.status = 'running';
     state.progress = 20;
@@ -184,11 +194,21 @@ class ActionPipelineManager {
 
     try {
       // Delegate to Safe ToolExecutor
+      if (signal?.aborted) throw new Error('Action cancelled before execution.');
       const execResult = await this.toolExecutor.execute(
         state.type,
         state.payload,
-        requiresApproval
+        requiresApproval,
+        signal
       );
+      if (signal?.aborted) {
+        state.status = 'cancelled';
+        state.message = 'Action cancelled.';
+        state.updatedAt = Date.now();
+        this.idempotencyLog.set(idempotencyKey, { timestamp: Date.now(), actionId: state.id, status: 'cancelled' });
+        this.notify();
+        return { success: false, actionId: state.id, message: 'Action cancelled.', status: 'cancelled' };
+      }
 
       state.updatedAt = Date.now();
 
@@ -227,6 +247,14 @@ class ActionPipelineManager {
         };
       }
     } catch (err: unknown) {
+      if (signal?.aborted) {
+        state.status = 'cancelled';
+        state.message = 'Action cancelled.';
+        state.updatedAt = Date.now();
+        this.idempotencyLog.set(idempotencyKey, { timestamp: Date.now(), actionId: state.id, status: 'cancelled' });
+        this.notify();
+        return { success: false, actionId: state.id, message: 'Action cancelled.', status: 'cancelled' };
+      }
       const errorMsg = err instanceof Error ? err.message : 'Action execution exception';
       state.status = 'failed';
       state.error = errorMsg;
@@ -253,6 +281,7 @@ class ActionPipelineManager {
     if (!act) return false;
     if (act.status === 'completed' || act.status === 'cancelled') return false;
 
+    this.abortControllers.get(actionId)?.abort();
     act.status = 'cancelled';
     act.message = reason;
     act.updatedAt = Date.now();

@@ -15,8 +15,10 @@ export class ToolExecutor implements IToolExecutor {
   public async execute(
     actionType: string,
     payload: Record<string, unknown> = {},
-    _requiresApproval = false
+    _requiresApproval = false,
+    signal?: AbortSignal
   ): Promise<{ success: boolean; message: string; result?: unknown }> {
+    if (signal?.aborted) return { success: false, message: 'Action cancelled before execution.' };
     const actionUpper = (actionType || '').toUpperCase().trim();
     const target = String(payload.target || payload.filename || payload.path || payload.command || payload.url || 'system');
 
