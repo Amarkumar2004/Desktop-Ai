@@ -719,25 +719,33 @@ describe('NewsUserPrefs Storage & Filters', () => {
     expect(savedBookmark.url).toBe('https://example.com/expired-news');
   });
 
-  it('22. sortArticlesNewestFirst floats freshly arrived articles (isNew=true) to the very top', () => {
-    const olderNewArticle = makeArticle({
-      id: 'article-new-1',
-      title: 'Newly Discovered Breaking Story',
-      seendate: '2026-10-31T10:00:00.000Z',
-      isNew: true,
-    });
-    const regularArticle = makeArticle({
-      id: 'article-regular-1',
-      title: 'Regular Existing Story',
+  it('22. sortArticlesNewestFirst strictly orders by publication timestamp and breaks ties with isNew=true', () => {
+    const freshArticle = makeArticle({
+      id: 'article-fresh-1',
+      title: 'Freshly Published Breaking Story',
       seendate: '2026-10-31T11:00:00.000Z',
       isNew: false,
     });
+    const olderArticle = makeArticle({
+      id: 'article-older-1',
+      title: 'Older Story',
+      seendate: '2026-10-31T10:00:00.000Z',
+      isNew: true,
+    });
+    const sameTimeNewArticle = makeArticle({
+      id: 'article-same-time-new',
+      title: 'Same Time Newly Arrived Story',
+      seendate: '2026-10-31T11:00:00.000Z',
+      isNew: true,
+    });
 
-    const articles = [regularArticle, olderNewArticle];
+    const articles = [olderArticle, freshArticle, sameTimeNewArticle];
     const sorted = [...articles].sort(sortArticlesNewestFirst);
 
-    expect(sorted[0].id).toBe('article-new-1');
-    expect(sorted[1].id).toBe('article-regular-1');
+    // 11:00 AM articles come before 10:00 AM; between the 11:00 AM articles, isNew floats to the top
+    expect(sorted[0].id).toBe('article-same-time-new');
+    expect(sorted[1].id).toBe('article-fresh-1');
+    expect(sorted[2].id).toBe('article-older-1');
   });
 
   it('23. sortArticlesNewestFirst orders articles descending by publication timestamp', () => {

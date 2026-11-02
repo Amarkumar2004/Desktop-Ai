@@ -1201,9 +1201,9 @@ function DashboardContent() {
                                 {article.title}
                               </a>
                               <div className="flex items-center gap-1.5 mt-1 text-[9px] text-stone-400 flex-wrap">
-                                <span className="font-mono">{formatTimeAgo(article.seendate) || article.timeAgo}</span>
-                                <span>•</span>
-                                <span className="text-stone-500">{article.domain}</span>
+                                <span className="font-mono text-stone-500 tabular-nums shrink-0 min-w-[46px]">{formatTimeAgo(article.seendate) || article.timeAgo}</span>
+                                <span className="text-stone-300 select-none">•</span>
+                                <span className="text-stone-500 font-medium">{article.domain}</span>
                                 {article.category && (
                                   <button
                                     onClick={(e) => {

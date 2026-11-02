@@ -43,18 +43,42 @@ function normalizeHeadline(title: string): string {
 }
 
 /**
+ * Safe parser for both standard ISO and GDELT compact (YYYYMMDDTHHMMSSZ) timestamps
+ */
+export function parseTimestampMs(dateStr?: string | null): number {
+  if (!dateStr || typeof dateStr !== 'string') return 0;
+  const trimmed = dateStr.trim();
+  if (/^\d{8}T\d{6}Z$/.test(trimmed)) {
+    try {
+      const year = parseInt(trimmed.substring(0, 4), 10);
+      const month = parseInt(trimmed.substring(4, 6), 10) - 1;
+      const day = parseInt(trimmed.substring(6, 8), 10);
+      const hour = parseInt(trimmed.substring(9, 11), 10);
+      const min = parseInt(trimmed.substring(11, 13), 10);
+      const sec = parseInt(trimmed.substring(13, 15), 10);
+      const d = new Date(Date.UTC(year, month, day, hour, min, sec));
+      return isNaN(d.getTime()) ? 0 : d.getTime();
+    } catch {
+      return 0;
+    }
+  }
+  const t = new Date(trimmed).getTime();
+  return isNaN(t) ? 0 : t;
+}
+
+/**
  * Sorting comparator for real-time news display:
- * 1. Freshly discovered articles (`isNew === true`) float to the very top.
- * 2. All articles are strictly sorted descending by publication timestamp (newest first).
- * 3. Ties broken by server ingestion timestamp.
+ * 1. Strictly sort descending by publication timestamp (newest publication always first).
+ * 2. Ties in publication time are broken by newly arrived articles (`isNew === true`) floating to the top.
+ * 3. Final tie-breaker is server ingestion timestamp.
  */
 export function sortArticlesNewestFirst(a: GlobalNewsArticle, b: GlobalNewsArticle): number {
+  const timeA = parseTimestampMs(a.seendate) || a.ingestedAtMs || 0;
+  const timeB = parseTimestampMs(b.seendate) || b.ingestedAtMs || 0;
+  if (timeB !== timeA) return timeB - timeA;
+
   if (a.isNew && !b.isNew) return -1;
   if (!a.isNew && b.isNew) return 1;
-
-  const timeA = new Date(a.seendate).getTime() || a.ingestedAtMs || 0;
-  const timeB = new Date(b.seendate).getTime() || b.ingestedAtMs || 0;
-  if (timeB !== timeA) return timeB - timeA;
 
   return (b.ingestedAtMs || 0) - (a.ingestedAtMs || 0);
 }
@@ -72,7 +96,7 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
             const now = Date.now();
             const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
             const valid = parsed.filter((a) => {
-              const artTime = new Date(a.seendate).getTime() || a.ingestedAtMs || now;
+              const artTime = parseTimestampMs(a.seendate) || a.ingestedAtMs || now;
               return now - artTime < TWELVE_HOURS_MS;
             });
             return valid.sort(sortArticlesNewestFirst);
@@ -175,8 +199,8 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
             (norm ? discoveredAtMapRef.current.get(norm) : undefined);
 
           // An article is only eligible for the 'NEW' badge if published within the last 45 minutes
-          const pubTimeMs = new Date(art.seendate).getTime();
-          const isFreshPublication = !isNaN(pubTimeMs) && nowMs - pubTimeMs <= 45 * 60 * 1000;
+          const pubTimeMs = parseTimestampMs(art.seendate);
+          const isFreshPublication = pubTimeMs > 0 && nowMs - pubTimeMs <= 45 * 60 * 1000;
 
           let isNew = false;
           if (!isFirstLoad && isFreshPublication) {
@@ -208,7 +232,7 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
           const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 
           for (const item of processed) {
-            const artTime = new Date(item.seendate).getTime() || item.ingestedAtMs || now;
+            const artTime = parseTimestampMs(item.seendate) || item.ingestedAtMs || now;
             const norm = normalizeHeadline(item.title);
             if (now - artTime < TWELVE_HOURS_MS) {
               if (!norm || !titleSet.has(norm)) {
@@ -221,14 +245,14 @@ export function useNewsMonitoring(options: UseNewsMonitoringOptions = {}): UseNe
           for (const prevArt of prev) {
             const norm = normalizeHeadline(prevArt.title);
             if (!map.has(prevArt.id) && (!norm || !titleSet.has(norm))) {
-              const artTime = new Date(prevArt.seendate).getTime() || prevArt.ingestedAtMs || now;
+              const artTime = parseTimestampMs(prevArt.seendate) || prevArt.ingestedAtMs || now;
               if (now - artTime < TWELVE_HOURS_MS) {
                 const disc =
                   discoveredAtMapRef.current.get(prevArt.id) ??
                   (norm ? discoveredAtMapRef.current.get(norm) : undefined) ??
                   0;
-                const prevPubTime = new Date(prevArt.seendate).getTime();
-                const isFreshPub = !isNaN(prevPubTime) && now - prevPubTime <= 45 * 60 * 1000;
+                const prevPubTime = parseTimestampMs(prevArt.seendate);
+                const isFreshPub = prevPubTime > 0 && now - prevPubTime <= 45 * 60 * 1000;
                 const stillNew = isFreshPub && disc > 0 && now - disc < NEW_ARTICLE_TTL_MS;
                 map.set(prevArt.id, { ...prevArt, isNew: stillNew });
                 if (norm) titleSet.add(norm);
