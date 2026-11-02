@@ -7,6 +7,7 @@
 
 import type { IToolExecutor } from '@/types/realtimeVoice';
 import { createTask } from '@/backend/services/taskService';
+import { createAgentRun, recordAgentMessage } from '@/backend/services/agentRuntimeService';
 import { permissionManager } from '@/lib/security/permissionManager';
 import { SecurityValidator } from '@/lib/security/securityValidator';
 import { fetchWithDesktopAuth } from '@/lib/security/desktopAuthClient';
@@ -205,10 +206,19 @@ export class ToolExecutor implements IToolExecutor {
           priority,
           category: 'Operations',
         });
+        const runId = assignedAgent === 'SUSI' ? await createAgentRun(created.id) : null;
+        if (runId) {
+          await recordAgentMessage({
+            runId, taskId: created.id, fromAgent: 'SUSI', toAgent: 'ALL',
+            type: 'status',
+            content: 'Task accepted by SUSI. Planning and subtask assignment are pending runtime orchestration.',
+            metadata: { phase: 'accepted', assignedAgent },
+          });
+        }
         return {
           success: true,
-          message: `Task "${title}" created and assigned to ${assignedAgent}.`,
-          result: created,
+          message: `Task "${title}" created and assigned to ${assignedAgent}.${runId ? ' Manager run saved to backend.' : ' Agent-run backend persistence requires an authenticated Supabase session.'}`,
+          result: { ...created, agentRunId: runId },
         };
       } catch (err: unknown) {
         return {
