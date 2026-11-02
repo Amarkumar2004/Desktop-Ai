@@ -15,10 +15,35 @@ export const runtime = 'nodejs';
 /**
  * POST /api/agents/orchestrate
  * Dispatches an autonomous multi-agent pipeline: SUSI → SPY → EURO → LEX → SUSI Verification
+ * Or cancels an active pipeline if { action: 'cancel' } is received.
  */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
+
+    // Explicit pipeline cancellation command
+    if (body.action === 'cancel') {
+      const targetTaskId = String(body.taskId || '').trim();
+      if (!targetTaskId) {
+        return NextResponse.json(
+          { success: false, error: 'taskId is required for pipeline cancellation.' },
+          { status: 400 }
+        );
+      }
+      const cancelled = multiAgentOrchestrator.cancelPipeline(
+        targetTaskId,
+        (body.reason as string) || 'Cancellation requested via API.'
+      );
+      return NextResponse.json({
+        success: true,
+        cancelled,
+        taskId: targetTaskId,
+        message: cancelled
+          ? `Pipeline for task ${targetTaskId} aborted.`
+          : `No active in-flight pipeline found for task ${targetTaskId}.`,
+      });
+    }
+
     const title = (body.title as string)?.trim() || 'Autonomous Multi-Agent Task';
     const objective = (body.objective as string)?.trim() || title;
     const context = body.context || {};
@@ -36,23 +61,58 @@ export async function POST(req: NextRequest) {
       taskId = created.id;
     }
 
-    // Execute the full multi-agent pipeline
+    // Execute the full multi-agent pipeline, propagating the incoming HTTP request AbortSignal
     const result = await multiAgentOrchestrator.executePipeline({
       taskId,
       title,
       objective,
       context,
+      signal: req.signal,
     });
 
     const statusCode = result.success ? 200 : result.status === 'cancelled' ? 499 : 500;
     return NextResponse.json(result, { status: statusCode });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    const isCancelled = req.signal.aborted || msg.toLowerCase().includes('cancel');
     return NextResponse.json(
       {
         success: false,
+        status: isCancelled ? 'cancelled' : 'failed',
         error: `Multi-agent orchestration failed: ${msg}`,
       },
+      { status: isCancelled ? 499 : 500 }
+    );
+  }
+}
+
+/**
+ * DELETE /api/agents/orchestrate?taskId=...
+ * Immediately aborts an in-flight pipeline for the specified task.
+ */
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const taskId = searchParams.get('taskId');
+    if (!taskId) {
+      return NextResponse.json(
+        { success: false, error: 'taskId query parameter is required for cancellation.' },
+        { status: 400 }
+      );
+    }
+    const cancelled = multiAgentOrchestrator.cancelPipeline(taskId, 'Pipeline cancelled via HTTP DELETE.');
+    return NextResponse.json({
+      success: true,
+      cancelled,
+      taskId,
+      message: cancelled
+        ? `Pipeline for task ${taskId} successfully cancelled.`
+        : `No active pipeline was found for task ${taskId}.`,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json(
+      { success: false, error: `Failed to cancel pipeline: ${msg}` },
       { status: 500 }
     );
   }
@@ -116,4 +176,3 @@ export async function GET(req: NextRequest) {
     );
   }
 }
-

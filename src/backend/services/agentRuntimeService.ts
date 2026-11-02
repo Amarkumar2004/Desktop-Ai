@@ -97,11 +97,13 @@ export async function createAgentRun(taskId: string, plan: Json = []): Promise<s
         plan,
       }).select('id').single();
 
-      if (!error && data?.id) {
+      if (error) {
+        console.warn(`[agentRuntimeService] Supabase agent_runs insert failed: ${error.message} (${error.code}). Falling back to user-isolated memory.`);
+      } else if (data?.id) {
         newRun.id = data.id;
       }
-    } catch {
-      // Supabase table pending migration or offline: fallback to memory/localStorage
+    } catch (err: unknown) {
+      console.warn(`[agentRuntimeService] Supabase agent_runs network exception: ${(err as Error).message}. Falling back to user-isolated memory.`);
     }
   }
 
@@ -162,9 +164,12 @@ export async function updateAgentRun(
       if (patch.plan !== undefined) updatePayload.plan = patch.plan;
       if (patch.completed) updatePayload.completed_at = now;
 
-      await ctx.supabase.from('agent_runs').update(updatePayload).eq('id', runId);
-    } catch {
-      // Ignore if table not yet migrated
+      const { error } = await ctx.supabase.from('agent_runs').update(updatePayload).eq('id', runId);
+      if (error) {
+        console.warn(`[agentRuntimeService] Supabase agent_runs update failed: ${error.message}. Persisted to local store.`);
+      }
+    } catch (err: unknown) {
+      console.warn(`[agentRuntimeService] Supabase agent_runs update exception: ${(err as Error).message}. Persisted to local store.`);
     }
   }
 
@@ -217,11 +222,13 @@ export async function recordAgentMessage(input: {
         metadata: input.metadata ?? {},
       }).select().single();
 
-      if (!error && data) {
+      if (error) {
+        console.warn(`[agentRuntimeService] Supabase agent_messages insert failed: ${error.message}. Saved to local fallback.`);
+      } else if (data) {
         newMsg.id = data.id;
       }
-    } catch {
-      // Local fallback
+    } catch (err: unknown) {
+      console.warn(`[agentRuntimeService] Supabase agent_messages network exception: ${(err as Error).message}. Saved to local fallback.`);
     }
   }
 
@@ -320,14 +327,19 @@ export async function saveAgentMemory(agentId: WorkforceAgentId, memoryKey: stri
   if (ctx) {
     memItem.user_id = ctx.userId;
     try {
-      await ctx.supabase.from('agent_memory').upsert({
+      const { error } = await ctx.supabase.from('agent_memory').upsert({
         user_id: ctx.userId,
         agent_id: agentId,
         memory_key: memoryKey,
         content,
         updated_at: now,
       }, { onConflict: 'user_id,agent_id,memory_key' });
-    } catch {}
+      if (error) {
+        console.warn(`[agentRuntimeService] Supabase agent_memory upsert failed: ${error.message}. Saved to local fallback memory.`);
+      }
+    } catch (err: unknown) {
+      console.warn(`[agentRuntimeService] Supabase agent_memory upsert exception: ${(err as Error).message}. Saved to local fallback memory.`);
+    }
   }
   return true;
 }

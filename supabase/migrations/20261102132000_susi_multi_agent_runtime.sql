@@ -1,6 +1,6 @@
 -- SUSI AI — Multi-Agent Runtime Foundation Schema
 -- Tables: agent_runs, agent_messages, agent_memory
--- Supports authenticated users (Supabase Auth) and desktop anonymous mode (user_id IS NULL)
+-- Strictly isolated RLS policies for authenticated users (user_id = auth.uid()) and anonymous desktop mode (user_id IS NULL)
 
 -- 1. AGENT_RUNS: Autonomous Multi-Agent Swarm Execution Lifecycle
 CREATE TABLE IF NOT EXISTS public.agent_runs (
@@ -53,18 +53,18 @@ ALTER TABLE public.agent_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_memory ENABLE ROW LEVEL SECURITY;
 
--- Policies for agent_runs
+-- 1. Policies for agent_runs (Strictly user-isolated for authenticated; user_id IS NULL for anon)
 DROP POLICY IF EXISTS agent_runs_user_all ON public.agent_runs;
 CREATE POLICY agent_runs_user_all ON public.agent_runs FOR ALL TO authenticated
-  USING (user_id = auth.uid() OR user_id IS NULL)
-  WITH CHECK (user_id = auth.uid() OR user_id IS NULL);
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
 
 DROP POLICY IF EXISTS agent_runs_anon ON public.agent_runs;
 CREATE POLICY agent_runs_anon ON public.agent_runs FOR ALL TO anon
   USING (user_id IS NULL)
   WITH CHECK (user_id IS NULL);
 
--- Policies for agent_messages (hardened run ownership for authenticated, anon for desktop)
+-- 2. Policies for agent_messages (Strictly run-ownership verified for authenticated)
 DROP POLICY IF EXISTS agent_messages_user_all ON public.agent_messages;
 CREATE POLICY agent_messages_user_all ON public.agent_messages
   FOR ALL TO authenticated
@@ -74,7 +74,7 @@ CREATE POLICY agent_messages_user_all ON public.agent_messages
       SELECT 1 FROM public.agent_runs AS own_run
       WHERE own_run.id = agent_messages.run_id
         AND own_run.task_id = agent_messages.task_id
-        AND (own_run.user_id = auth.uid() OR own_run.user_id IS NULL)
+        AND own_run.user_id = auth.uid()
     )
   )
   WITH CHECK (
@@ -83,7 +83,7 @@ CREATE POLICY agent_messages_user_all ON public.agent_messages
       SELECT 1 FROM public.agent_runs AS own_run
       WHERE own_run.id = agent_messages.run_id
         AND own_run.task_id = agent_messages.task_id
-        AND (own_run.user_id = auth.uid() OR own_run.user_id IS NULL)
+        AND own_run.user_id = auth.uid()
     )
   );
 
@@ -92,11 +92,11 @@ CREATE POLICY agent_messages_anon ON public.agent_messages FOR ALL TO anon
   USING (user_id IS NULL)
   WITH CHECK (user_id IS NULL);
 
--- Policies for agent_memory
+-- 3. Policies for agent_memory (Strictly user-isolated)
 DROP POLICY IF EXISTS agent_memory_user_all ON public.agent_memory;
 CREATE POLICY agent_memory_user_all ON public.agent_memory FOR ALL TO authenticated
-  USING (user_id = auth.uid() OR user_id IS NULL)
-  WITH CHECK (user_id = auth.uid() OR user_id IS NULL);
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
 
 DROP POLICY IF EXISTS agent_memory_anon ON public.agent_memory;
 CREATE POLICY agent_memory_anon ON public.agent_memory FOR ALL TO anon

@@ -20,6 +20,8 @@ import {
 } from './agentRuntimeService';
 import { updateTask, createTaskStep, updateTaskStep } from './taskService';
 import { executeAiInference } from './aiProviderService';
+import { researchRetrievalService, ResearchRetrievalResult } from './researchRetrievalService';
+import { workspaceFileWriter, FileWriteResult } from './workspaceFileWriter';
 import type { Json, AgentMessage } from '@/backend/types/database';
 
 export interface MultiAgentStepRecord {
@@ -52,6 +54,7 @@ export interface MultiAgentPipelineResult {
     findings: string;
     sources: string[];
     technicalPrerequisites: string[];
+    retrievalStatus: 'retrieved' | 'unavailable' | 'no_results';
   };
   euroAnalysis?: {
     insights: string;
@@ -60,18 +63,66 @@ export interface MultiAgentPipelineResult {
   };
   lexExecution?: {
     implementationSummary: string;
+    executionMode: 'artifacts_generated' | 'file_write_applied' | 'file_write_partial_or_rejected';
     artifacts: { filename: string; content: string; language?: string }[];
+    fileOperations?: FileWriteResult[];
+    verifiedFilesCount?: number;
   };
   susiVerification?: {
     verified: boolean;
-    verificationNotes: string;
+    verificationVerdict: 'VERIFIED_PASS' | 'VERIFIED_FAIL';
+    acceptanceCriteriaMet: boolean;
+    auditNotes: string;
     executiveSummary: string;
   };
   finalOutput?: string;
   error?: string;
 }
 
+/**
+ * Scrubs sensitive credentials, tokens, and private keys from emitted logs, messages, and memories.
+ */
+function scrubSensitiveData(text: string): string {
+  if (!text || typeof text !== 'string') return text;
+  return text
+    .replace(/(?:sk-[a-zA-Z0-9_\-]{20,})/g, '[REDACTED_API_KEY]')
+    .replace(/(?:AIza[0-9A-Za-z\-_]{35})/g, '[REDACTED_GEMINI_KEY]')
+    .replace(/(?:ghp_[0-9A-Za-z]{36})/g, '[REDACTED_GITHUB_KEY]')
+    .replace(/(?:Bearer\s+[a-zA-Z0-9_\-\.]{20,})/gi, 'Bearer [REDACTED_TOKEN]')
+    .replace(/(?:(?:password|secret|apiKey)\s*[:=]\s*["']?[^"'\s\n]{4,})/gi, '$1: [REDACTED]');
+}
+
+/**
+ * Combines multiple AbortSignals safely.
+ */
+function anySignal(signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  for (const s of signals) {
+    if (s.aborted) {
+      controller.abort();
+      return controller.signal;
+    }
+    s.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+  return controller.signal;
+}
+
 export class MultiAgentOrchestrator {
+  private activePipelines = new Map<string, AbortController>();
+
+  /**
+   * Proactively cancels an active running pipeline by taskId.
+   */
+  public cancelPipeline(taskId: string, reason = 'Pipeline cancelled by client.'): boolean {
+    const controller = this.activePipelines.get(taskId);
+    if (controller) {
+      controller.abort(new Error(reason));
+      this.activePipelines.delete(taskId);
+      return true;
+    }
+    return false;
+  }
+
   /**
    * Executes the complete 5-stage multi-agent pipeline.
    */
@@ -80,24 +131,31 @@ export class MultiAgentOrchestrator {
     const steps: MultiAgentStepRecord[] = [];
     let currentStepId: string | null = null;
 
+    // Create internal controller and register pipeline
+    const internalController = new AbortController();
+    this.activePipelines.set(taskId, internalController);
+
+    const activeSignal = signal ? anySignal([signal, internalController.signal]) : internalController.signal;
+
     // Check cancellation before start
-    if (signal?.aborted) {
+    if (activeSignal.aborted) {
+      this.activePipelines.delete(taskId);
       throw new Error('Pipeline cancelled before execution started.');
     }
 
     // 1. Initialize Agent Run
     const runId = await createAgentRun(taskId, [
       { step: 1, agent: 'SUSI', role: 'Task Decomposition & Planning' },
-      { step: 2, agent: 'SPY', role: 'Deep Research & Intelligence Gathering' },
+      { step: 2, agent: 'SPY', role: 'Deep Research & Technical Intelligence' },
       { step: 3, agent: 'EURO', role: 'Analytical Synthesis & Risk Blueprint' },
       { step: 4, agent: 'LEX', role: 'Implementation Deliverables & Execution' },
-      { step: 5, agent: 'SUSI', role: 'Final Verification & Synthesis' },
+      { step: 5, agent: 'SUSI', role: 'Structured Verification & Audit' },
     ]);
 
     await updateAgentRun(runId, { status: 'planning' });
     await updateTask(taskId, { progress: 5, status: 'in_progress', completed: false });
 
-    // Helper to log message and trigger progress
+    // Helper to log scrubbed message and trigger progress
     const logAndEmit = async (
       agent: WorkforceAgentId,
       toAgent: WorkforceAgentId | 'ALL',
@@ -106,14 +164,18 @@ export class MultiAgentOrchestrator {
       stageRecord: MultiAgentStepRecord,
       metadata?: Json
     ): Promise<AgentMessage> => {
+      const scrubbedContent = scrubSensitiveData(content);
+      const scrubbedMetadata = metadata
+        ? (JSON.parse(scrubSensitiveData(JSON.stringify(metadata))) as Json)
+        : undefined;
       const msg = await recordAgentMessage({
         runId,
         taskId,
         fromAgent: agent,
         toAgent,
         type,
-        content,
-        metadata,
+        content: scrubbedContent,
+        metadata: scrubbedMetadata,
       });
       onProgress?.(stageRecord, msg);
       return msg;
@@ -123,6 +185,8 @@ export class MultiAgentOrchestrator {
       // -----------------------------------------------------------------------
       // STAGE 1: SUSI (Manager / Planning)
       // -----------------------------------------------------------------------
+      if (activeSignal.aborted) throw new Error('Pipeline cancelled before planning.');
+
       const stage1Start = Date.now();
       const stage1Record: MultiAgentStepRecord = {
         agent: 'SUSI',
@@ -158,7 +222,7 @@ Deconstruct the following user goal into a strict 3-stage execution plan:
 
 User Task: "${title}"
 Detailed Objective: "${objective}"
-Context: ${JSON.stringify(context)}
+Context: ${scrubSensitiveData(JSON.stringify(context))}
 
 Respond in structured format with clear directives for each agent.`;
 
@@ -166,8 +230,10 @@ Respond in structured format with clear directives for each agent.`;
         systemPrompt: 'You are SUSI, the executive manager of an autonomous multi-agent intelligence swarm.',
         prompt: susiPlanPrompt,
         temperature: 0.3,
-        signal,
+        signal: activeSignal,
       });
+
+      if (activeSignal.aborted) throw new Error('Pipeline cancelled during planning.');
 
       stage1Record.status = 'completed';
       stage1Record.summary = 'Multi-agent plan generated and assignments dispatched.';
@@ -191,9 +257,9 @@ Respond in structured format with clear directives for each agent.`;
       );
 
       // -----------------------------------------------------------------------
-      // STAGE 2: SPY (Research & Intelligence Gathering)
+      // STAGE 2: SPY (Research & Genuine Technical Retrieval)
       // -----------------------------------------------------------------------
-      if (signal?.aborted) throw new Error('Pipeline cancelled by client.');
+      if (activeSignal.aborted) throw new Error('Pipeline cancelled before research.');
 
       const stage2Start = Date.now();
       const stage2Record: MultiAgentStepRecord = {
@@ -218,9 +284,24 @@ Respond in structured format with clear directives for each agent.`;
         'SPY',
         'SUSI',
         'status',
-        `SPY scanning documentation, technical specifications, and evidence for "${title}"...`,
+        `SPY initiating genuine search and retrieval for "${title}"...`,
         stage2Record
       );
+
+      // 2.1 Genuine Technical Retrieval using researchRetrievalService
+      const retrievalEvidence: ResearchRetrievalResult = await researchRetrievalService.retrieveEvidence(
+        objective || title,
+        { signal: activeSignal, maxResults: 5 }
+      );
+
+      const verifiedSourcesText =
+        retrievalEvidence.sources.length > 0
+          ? retrievalEvidence.sources
+              .map((s, idx) => `[Source ${idx + 1}] ${s.title}\nURL: ${s.url}\nExcerpt: ${s.snippet}`)
+              .join('\n\n')
+          : `NOTICE: External research retrieval tool status: ${retrievalEvidence.toolStatus.toUpperCase()} (${
+              retrievalEvidence.diagnosticNotes || 'No live web results retrieved'
+            }). You must explicitly report that citations reflect base model training and live web citations are unavailable. Do not fabricate URLs.`;
 
       const spyResearchPrompt = `You are SPY, the Specialized Research & Technical Intelligence Agent of SUSI AI.
 Your directive from SUSI:
@@ -229,39 +310,62 @@ ${planResult.text}
 User Objective:
 "${objective}"
 
-Conduct genuine, thorough research on this task.
-Guidelines:
-- Detail concrete technical standards, libraries, APIs, and official best practices.
-- Cite relevant sources or standard conventions (e.g. Next.js 16, React 19, TypeScript 5, Tailwind CSS v4, OWASP security).
-- Enumerate prerequisites, performance considerations, and environmental constraints.
-- Never hallucinate non-existent features or APIs.
+Genuine Retrieval Evidence Available:
+----------------------------------------
+${verifiedSourcesText}
+----------------------------------------
 
-Format response clearly with:
-1. Core Findings & Standards
-2. Source Citations / References
+Conduct thorough, factual technical research based on verified evidence:
+Guidelines:
+- If genuine sources were retrieved above, base your findings on them and cite their exact URLs.
+- If retrieval tools were unavailable, explicitly declare: "Live web retrieval unavailable; findings reflect offline architectural baseline."
+- Never fabricate fake URLs, hallucinated APIs, or fictitious papers.
+- Detail concrete technical standards, prerequisites, and compatibility considerations.
+
+Provide:
+1. Core Technical Findings & Standards
+2. Genuine Citations & Evidence (List only authentic URLs from above or state none)
 3. Technical Prerequisites & Dependencies`;
 
       const spyResult = await executeAiInference({
-        systemPrompt: 'You are SPY, an elite technical intelligence and research AI agent. Strict accuracy and verifiable facts only.',
+        systemPrompt:
+          'You are SPY, an elite technical intelligence AI agent. Strict factual accuracy. Never generate fictitious citations.',
         prompt: spyResearchPrompt,
         temperature: 0.2,
-        signal,
+        signal: activeSignal,
       });
 
+      if (activeSignal.aborted) throw new Error('Pipeline cancelled during research.');
+
       stage2Record.status = 'completed';
-      stage2Record.summary = 'Research completed with verified technical evidence.';
+      stage2Record.summary =
+        retrievalEvidence.sources.length > 0
+          ? `Research completed with ${retrievalEvidence.sources.length} genuine retrieved sources.`
+          : 'Research completed with offline baseline (live retrieval unavailable).';
       stage2Record.durationMs = Date.now() - stage2Start;
-      stage2Record.details = { researchOutput: spyResult.text, provider: spyResult.provider };
+      stage2Record.details = {
+        researchOutput: spyResult.text,
+        provider: spyResult.provider,
+        sourcesCount: retrievalEvidence.sources.length,
+        retrievalStatus: retrievalEvidence.toolStatus,
+      };
+
+      const authenticSourceUrls = retrievalEvidence.sources.map((s) => s.url);
 
       await saveAgentMemory('SPY', `research_${taskId}`, {
         title,
         summary: spyResult.text.slice(0, 500),
-        fullResearch: spyResult.text,
+        sources: authenticSourceUrls,
+        retrievalStatus: retrievalEvidence.toolStatus,
       });
 
       await updateTaskStep(dbStep2.id, {
         status: 'completed',
-        result: { research: spyResult.text },
+        result: {
+          research: spyResult.text,
+          sources: authenticSourceUrls,
+          retrievalStatus: retrievalEvidence.toolStatus,
+        },
         completed_at: new Date().toISOString(),
       });
       await updateTask(taskId, { progress: 45 });
@@ -270,15 +374,15 @@ Format response clearly with:
         'SPY',
         'EURO',
         'handoff',
-        `SPY completed research. Handing off findings to EURO for synthesis and risk assessment:\n${spyResult.text.slice(0, 350)}...`,
+        `SPY completed research (${retrievalEvidence.sources.length} verified sources). Handing off to EURO:\n${spyResult.text.slice(0, 350)}...`,
         stage2Record,
-        { research: spyResult.text }
+        { sources: authenticSourceUrls, retrievalStatus: retrievalEvidence.toolStatus }
       );
 
       // -----------------------------------------------------------------------
       // STAGE 3: EURO (Analysis & Synthesis)
       // -----------------------------------------------------------------------
-      if (signal?.aborted) throw new Error('Pipeline cancelled by client.');
+      if (activeSignal.aborted) throw new Error('Pipeline cancelled before analysis.');
 
       const stage3Start = Date.now();
       const stage3Record: MultiAgentStepRecord = {
@@ -327,11 +431,14 @@ Format response clearly:
 - Actionable Blueprint for LEX`;
 
       const euroResult = await executeAiInference({
-        systemPrompt: 'You are EURO, an analytical synthesis AI agent specializing in risk assessment, pattern detection, and blueprint architecture.',
+        systemPrompt:
+          'You are EURO, an analytical synthesis AI agent specializing in risk assessment, pattern detection, and blueprint architecture.',
         prompt: euroAnalysisPrompt,
         temperature: 0.2,
-        signal,
+        signal: activeSignal,
       });
+
+      if (activeSignal.aborted) throw new Error('Pipeline cancelled during analysis.');
 
       stage3Record.status = 'completed';
       stage3Record.summary = 'Risk assessment completed and actionable blueprint generated.';
@@ -360,9 +467,9 @@ Format response clearly:
       );
 
       // -----------------------------------------------------------------------
-      // STAGE 4: LEX (Execution & Implementation)
+      // STAGE 4: LEX (Execution & Safe Workspace File Operations)
       // -----------------------------------------------------------------------
-      if (signal?.aborted) throw new Error('Pipeline cancelled by client.');
+      if (activeSignal.aborted) throw new Error('Pipeline cancelled before execution.');
 
       const stage4Start = Date.now();
       const stage4Record: MultiAgentStepRecord = {
@@ -387,7 +494,7 @@ Format response clearly:
         'LEX',
         'EURO',
         'status',
-        `LEX building concrete implementation deliverables based on EURO's blueprint...`,
+        `LEX building implementation deliverables based on EURO's blueprint...`,
         stage4Record
       );
 
@@ -400,12 +507,12 @@ ${euroResult.text}
 Original User Goal:
 "${title} — ${objective}"
 
-Build the complete, production-ready implementation deliverables for this request.
+Build complete, production-ready implementation deliverables for this request.
 Guidelines:
-- Provide clean, functional code, configuration, or operational artifacts in formatted markdown code blocks.
-- If code is required, include file headers (e.g. // File: src/components/...) and full implementation without pseudo-code.
+- Provide clean, functional code or configuration in markdown code blocks.
+- Include exact file paths in code headers: // File: src/components/... or // File: src/lib/...
 - Adhere to the project stack: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4.
-- Follow strict security controls: no dangerous OS commands or unauthorized system tampering.
+- Follow strict security controls: no forbidden OS commands, no sensitive credentials.
 
 Provide:
 1. Executive Technical Summary of Deliverables
@@ -413,11 +520,14 @@ Provide:
 3. Verification & Validation Steps`;
 
       const lexResult = await executeAiInference({
-        systemPrompt: 'You are LEX, a lead implementation engineer and execution AI agent. Produce clean, production-grade code and solutions.',
+        systemPrompt:
+          'You are LEX, a lead implementation engineer and execution AI agent. Produce clean, production-grade code and solutions.',
         prompt: lexExecutionPrompt,
         temperature: 0.25,
-        signal,
+        signal: activeSignal,
       });
+
+      if (activeSignal.aborted) throw new Error('Pipeline cancelled during execution.');
 
       // Extract artifacts from code blocks
       const artifacts: { filename: string; content: string; language?: string }[] = [];
@@ -428,25 +538,64 @@ Provide:
         const lang = match[1] || 'text';
         const code = match[2];
         const fileMatch = code.match(/^\/\/\s*File:\s*([^\r\n]+)/m);
-        const filename = fileMatch ? fileMatch[1].trim() : `deliverable_${artifactIndex}.${lang === 'typescript' || lang === 'tsx' ? 'tsx' : lang === 'json' ? 'json' : 'ts'}`;
+        const filename = fileMatch
+          ? fileMatch[1].trim()
+          : `deliverable_${artifactIndex}.${lang === 'typescript' || lang === 'tsx' ? 'tsx' : lang === 'json' ? 'json' : 'ts'}`;
         artifacts.push({ filename, content: code, language: lang });
         artifactIndex++;
       }
 
-      stage4Record.status = 'completed';
-      stage4Record.summary = `Implementation deliverables generated (${artifacts.length} artifacts produced).`;
+      // Check whether actual workspace file writes were explicitly requested
+      const shouldApplyFiles = Boolean(
+        context.applyChanges || context.writeToDisk || context.executeFileChanges
+      );
+
+      const fileResults: FileWriteResult[] = [];
+      let verifiedFilesCount = 0;
+
+      if (shouldApplyFiles) {
+        for (const art of artifacts) {
+          const writeRes = await workspaceFileWriter.writeFile(art.filename, art.content, {
+            allowOverwrite: Boolean(context.allowOverwrite),
+            approvalConfirmed: Boolean(context.approvalConfirmed),
+          });
+          fileResults.push(writeRes);
+          if (writeRes.verified) {
+            verifiedFilesCount++;
+          }
+        }
+      }
+
+      const executionMode = shouldApplyFiles
+        ? verifiedFilesCount === fileResults.length && fileResults.length > 0
+          ? 'file_write_applied'
+          : 'file_write_partial_or_rejected'
+        : 'artifacts_generated';
+
+      const allRequestedFilesSucceeded = !shouldApplyFiles || (verifiedFilesCount === fileResults.length && fileResults.length > 0);
+
+      stage4Record.status = allRequestedFilesSucceeded ? 'completed' : 'failed';
+      stage4Record.summary = shouldApplyFiles
+        ? `Workspace files applied: ${verifiedFilesCount}/${fileResults.length} read-back verified.`
+        : `Code deliverables generated in-memory (${artifacts.length} artifacts produced). Disk write not requested.`;
       stage4Record.durationMs = Date.now() - stage4Start;
       stage4Record.details = {
         executionOutput: lexResult.text,
         artifactCount: artifacts.length,
+        executionMode,
+        fileOperations: fileResults as unknown as Json,
+        verifiedFilesCount,
         provider: lexResult.provider,
       };
 
       await updateTaskStep(dbStep4.id, {
-        status: 'completed',
+        status: allRequestedFilesSucceeded ? 'completed' : 'failed',
         result: {
           execution: lexResult.text,
           artifacts,
+          executionMode,
+          fileOperations: fileResults as unknown as Json,
+          verifiedFilesCount,
         },
         completed_at: new Date().toISOString(),
       });
@@ -455,23 +604,25 @@ Provide:
       await logAndEmit(
         'LEX',
         'SUSI',
-        'result',
-        `LEX finished implementation with ${artifacts.length} deliverable artifacts. Submitting to SUSI for final verification.`,
+        allRequestedFilesSucceeded ? 'result' : 'error',
+        shouldApplyFiles
+          ? `LEX applied and verified ${verifiedFilesCount}/${fileResults.length} workspace files on disk.`
+          : `LEX generated ${artifacts.length} in-memory code artifacts. Submitting to SUSI for verification.`,
         stage4Record,
-        { artifacts }
+        { artifacts, executionMode, fileOperations: fileResults as unknown as Json }
       );
 
       // -----------------------------------------------------------------------
-      // STAGE 5: SUSI (Verification & Executive Synthesis)
+      // STAGE 5: SUSI (Structured Verification & Strict Criteria Audit)
       // -----------------------------------------------------------------------
-      if (signal?.aborted) throw new Error('Pipeline cancelled by client.');
+      if (activeSignal.aborted) throw new Error('Pipeline cancelled before verification.');
 
       const stage5Start = Date.now();
       const stage5Record: MultiAgentStepRecord = {
         agent: 'SUSI',
         stage: 'VERIFICATION',
         status: 'running',
-        title: 'Executive Verification & Final Synthesis',
+        title: 'Structured Verification & Executive Audit',
       };
       steps.push(stage5Record);
 
@@ -489,54 +640,117 @@ Provide:
         'SUSI',
         'ALL',
         'status',
-        `SUSI evaluating all agent outputs (SPY Research, EURO Analysis, LEX Implementation) against acceptance criteria...`,
+        `SUSI auditing team outputs against acceptance criteria with strict structured validation...`,
         stage5Record
       );
 
       const susiVerifyPrompt = `You are SUSI, the Master Orchestration & Verification AI.
-Review the complete output produced by your agent team:
+Audit the outputs produced by your agent team:
 
 1. SPY Research Summary:
 ${spyResult.text.slice(0, 1000)}
+Genuine Sources Retrieved: ${authenticSourceUrls.join(', ') || 'None (offline baseline)'}
 
 2. EURO Analysis & Risk Blueprint:
 ${euroResult.text.slice(0, 1000)}
 
 3. LEX Implementation Deliverables:
+Mode: ${executionMode}
+Artifacts Generated: ${artifacts.length}
+${shouldApplyFiles ? `Files Written & Verified on Disk: ${verifiedFilesCount}/${fileResults.length}` : 'Execution: Artifact generation only (no files written to disk)'}
 ${lexResult.text.slice(0, 1500)}
 
 Original User Goal:
 "${title} — ${objective}"
 
-Verify that:
-1. The research directly addressed the user's objective with credible evidence.
-2. The analysis correctly identified key risks and edge cases.
-3. The execution deliverables are complete, robust, and safe.
+Strict Verification Rules:
+- Verification must strictly fail if deliverables do not address the acceptance criteria.
+- Verification must fail if file changes were requested but rejected or unverified.
+- Never grant a pass if the verdict is ambiguous or incomplete.
 
-Produce:
-1. Verification Verdict: [VERIFIED: YES or NO]
-2. Quality & Safety Audit Notes
-3. Authoritative Executive Summary for the User`;
+You MUST end your output with a strict JSON evaluation block in exactly this format:
+\`\`\`json
+{
+  "verdict": "VERIFIED_PASS" or "VERIFIED_FAIL",
+  "acceptanceCriteriaMet": true or false,
+  "evidenceCredible": true or false,
+  "fileOperationsVerified": true or false,
+  "auditNotes": "Concise explanation of audit findings",
+  "executiveSummary": "High-level summary for the user"
+}
+\`\`\``;
 
       const susiVerifyResult = await executeAiInference({
-        systemPrompt: 'You are SUSI, an executive validation AI. Verify outputs with zero tolerance for fake success or hallucination.',
+        systemPrompt:
+          'You are SUSI, an executive validation AI. Zero tolerance for fake success or hallucination. Require explicit structured evaluation.',
         prompt: susiVerifyPrompt,
-        temperature: 0.2,
-        signal,
+        temperature: 0.1,
+        signal: activeSignal,
       });
 
-      const isVerified = /\[VERIFIED:\s*YES\]/i.test(susiVerifyResult.text) || !/\[VERIFIED:\s*NO\]/i.test(susiVerifyResult.text);
+      if (activeSignal.aborted) throw new Error('Pipeline cancelled during verification.');
+
+      // Strict Structured Verdict Parser (no permissive regex!)
+      let parsedVerdict: {
+        verdict?: string;
+        acceptanceCriteriaMet?: boolean;
+        evidenceCredible?: boolean;
+        fileOperationsVerified?: boolean;
+        auditNotes?: string;
+        executiveSummary?: string;
+      } | null = null;
+
+      try {
+        const jsonMatch = susiVerifyResult.text.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          parsedVerdict = JSON.parse(jsonMatch[1]);
+        } else {
+          // Attempt raw JSON parse
+          const rawMatch = susiVerifyResult.text.match(/\{[\s\S]*"verdict"[\s\S]*\}/);
+          if (rawMatch) {
+            parsedVerdict = JSON.parse(rawMatch[0]);
+          }
+        }
+      } catch {
+        parsedVerdict = null;
+      }
+
+      // Explicit validation check: missing, incomplete, or ambiguous verdicts MUST FAIL
+      const hasPassVerdict = parsedVerdict?.verdict === 'VERIFIED_PASS';
+      const criteriaMet = parsedVerdict?.acceptanceCriteriaMet === true;
+      const fileCheckPassed = shouldApplyFiles
+        ? parsedVerdict?.fileOperationsVerified === true && verifiedFilesCount === fileResults.length && fileResults.length > 0
+        : true;
+
+      const isVerified = Boolean(
+        parsedVerdict &&
+          hasPassVerdict &&
+          criteriaMet &&
+          fileCheckPassed &&
+          allRequestedFilesSucceeded
+      );
+
+      const finalVerdictString: 'VERIFIED_PASS' | 'VERIFIED_FAIL' = isVerified ? 'VERIFIED_PASS' : 'VERIFIED_FAIL';
+      const auditNotes = parsedVerdict?.auditNotes || (isVerified ? 'All criteria satisfied.' : 'Verification failed: missing or rejected criteria.');
+      const executiveSummary = parsedVerdict?.executiveSummary || susiVerifyResult.text;
 
       stage5Record.status = isVerified ? 'completed' : 'failed';
-      stage5Record.summary = isVerified ? 'Executive verification passed.' : 'Verification failed: deliverables did not meet criteria.';
+      stage5Record.summary = isVerified
+        ? 'Executive verification PASSED: Acceptance criteria confirmed.'
+        : `Executive verification FAILED: ${auditNotes}`;
       stage5Record.durationMs = Date.now() - stage5Start;
-      stage5Record.details = { verificationOutput: susiVerifyResult.text, verified: isVerified };
+      stage5Record.details = {
+        verificationOutput: susiVerifyResult.text,
+        verified: isVerified,
+        parsedVerdict: parsedVerdict as unknown as Json,
+      };
 
       await updateTaskStep(dbStep5.id, {
         status: isVerified ? 'completed' : 'failed',
         result: {
           verification: susiVerifyResult.text,
           verified: isVerified,
+          verdict: finalVerdictString,
         },
         completed_at: new Date().toISOString(),
       });
@@ -556,14 +770,17 @@ Produce:
       await logAndEmit(
         'SUSI',
         'ALL',
-        'result',
-        `Multi-agent execution ${isVerified ? 'VERIFIED and COMPLETED' : 'FAILED verification'}.\n\nExecutive Summary:\n${susiVerifyResult.text}`,
+        isVerified ? 'result' : 'error',
+        `Multi-agent execution ${isVerified ? 'VERIFIED and COMPLETED' : 'FAILED verification'}.\nVerdict: ${finalVerdictString}\nNotes: ${auditNotes}\n\nExecutive Summary:\n${executiveSummary}`,
         stage5Record,
         {
           verified: isVerified,
-          summary: susiVerifyResult.text,
+          verdict: finalVerdictString,
+          summary: executiveSummary,
         }
       );
+
+      this.activePipelines.delete(taskId);
 
       return {
         success: isVerified,
@@ -573,8 +790,9 @@ Produce:
         steps,
         spyResearch: {
           findings: spyResult.text,
-          sources: ['Technical Documentation', 'Standards Baseline'],
+          sources: authenticSourceUrls,
           technicalPrerequisites: [],
+          retrievalStatus: retrievalEvidence.toolStatus,
         },
         euroAnalysis: {
           insights: euroResult.text,
@@ -583,18 +801,24 @@ Produce:
         },
         lexExecution: {
           implementationSummary: lexResult.text,
+          executionMode,
           artifacts,
+          fileOperations: shouldApplyFiles ? fileResults : undefined,
+          verifiedFilesCount,
         },
         susiVerification: {
           verified: isVerified,
-          verificationNotes: susiVerifyResult.text,
-          executiveSummary: susiVerifyResult.text,
+          verificationVerdict: finalVerdictString,
+          acceptanceCriteriaMet: criteriaMet,
+          auditNotes,
+          executiveSummary,
         },
-        finalOutput: susiVerifyResult.text,
+        finalOutput: executiveSummary,
       };
     } catch (err: unknown) {
+      this.activePipelines.delete(taskId);
       const errorMsg = err instanceof Error ? err.message : String(err);
-      const isCancelled = signal?.aborted || errorMsg.includes('cancelled');
+      const isCancelled = activeSignal.aborted || errorMsg.toLowerCase().includes('cancel');
       const finalStatus = isCancelled ? 'cancelled' : 'failed';
 
       // Update current step if active
@@ -638,4 +862,3 @@ Produce:
 }
 
 export const multiAgentOrchestrator = new MultiAgentOrchestrator();
-

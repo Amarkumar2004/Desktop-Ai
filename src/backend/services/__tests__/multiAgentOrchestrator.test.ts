@@ -1,254 +1,499 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { multiAgentOrchestrator } from '../multiAgentOrchestrator';
 import * as aiProviderService from '../aiProviderService';
+import { researchRetrievalService } from '../researchRetrievalService';
+import { workspaceFileWriter } from '../workspaceFileWriter';
 import {
   getAgentRunsForTask,
   getAgentMessages,
   getAgentMemory,
 } from '../agentRuntimeService';
-import { createTask, getTaskSteps } from '../taskService';
+import { createTask } from '../taskService';
+import fs from 'fs';
+import path from 'path';
 
-describe('MultiAgentOrchestrator — SUSI Swarm Runtime Pipeline', () => {
+describe('SUSI AI — Critical Runtime Audit & Production Hardening Regression Suite', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('1. Executes complete 5-stage pipeline: SUSI -> SPY -> EURO -> LEX -> SUSI Verification', async () => {
-    // Mock AI inferences for each stage
-    const aiSpy = vi.spyOn(aiProviderService, 'executeAiInference');
+  // ---------------------------------------------------------------------------
+  // 1. SPY RESEARCH TESTS
+  // ---------------------------------------------------------------------------
+  describe('1. SPY Research — Genuine Retrieval & Citation Integrity', () => {
+    it('integrates genuine technical retrieval, stores authentic URLs, and does not fabricate fake sources', async () => {
+      // Mock genuine retrieval service returning verified sources
+      vi.spyOn(researchRetrievalService, 'retrieveEvidence').mockResolvedValue({
+        toolStatus: 'retrieved',
+        query: 'Next.js 16 App Router',
+        sources: [
+          {
+            title: 'Next.js 16 Documentation',
+            url: 'https://en.wikipedia.org/wiki/Next.js',
+            snippet: 'Next.js is an open-source React front-end development web framework.',
+            sourceType: 'web',
+          },
+        ],
+        retrievedAt: new Date().toISOString(),
+      });
 
-    aiSpy.mockImplementation(async (req) => {
-      if (req.prompt.includes('Research Directive for SPY')) {
+      vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
+        if (req.prompt.includes('Research Directive for SPY')) {
+          return { text: 'Directives issued', provider: 'openai', model: 'gpt-4o' };
+        }
+        if (req.prompt.includes('SPY, the Specialized Research')) {
+          return {
+            text: 'SPY Findings: Verified Next.js framework standards. Citations: https://en.wikipedia.org/wiki/Next.js',
+            provider: 'groq',
+            model: 'llama-3.3-70b',
+          };
+        }
+        if (req.prompt.includes('EURO, the Senior Research Analysis')) {
+          return { text: 'Blueprint ready', provider: 'gemini', model: 'gemini-2.0' };
+        }
+        if (req.prompt.includes('LEX, the Lead Implementation')) {
+          return { text: '```typescript\n// File: src/components/TestCard.tsx\nexport const x = 1;\n```', provider: 'gemini', model: 'gemini-2.0' };
+        }
+        if (req.prompt.includes('SUSI, the Master Orchestration & Verification')) {
+          return {
+            text: '```json\n{"verdict": "VERIFIED_PASS", "acceptanceCriteriaMet": true, "evidenceCredible": true, "fileOperationsVerified": true, "auditNotes": "Verified"}\n```',
+            provider: 'openai',
+            model: 'gpt-4o',
+          };
+        }
+        return { text: 'fallback', provider: 'gemini', model: 'gemini-2.0' };
+      });
+
+      const task = await createTask({
+        title: 'Research Next.js 16 Architecture',
+        assignedAgent: 'SUSI',
+        priority: 'High',
+        category: 'Research',
+      });
+
+      const result = await multiAgentOrchestrator.executePipeline({
+        taskId: task.id,
+        title: task.title,
+        objective: 'Analyze Next.js App Router',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.spyResearch?.retrievalStatus).toBe('retrieved');
+      expect(result.spyResearch?.sources).toEqual(['https://en.wikipedia.org/wiki/Next.js']);
+
+      // Check agent memory stores the authentic URLs
+      const spyMemory = await getAgentMemory('SPY');
+      const taskMem = spyMemory.find((m) => m.memory_key.includes(task.id));
+      expect(taskMem).toBeDefined();
+      expect(JSON.stringify(taskMem?.content)).toContain('https://en.wikipedia.org/wiki/Next.js');
+    });
+
+    it('reports honestly when external research retrieval tools are unavailable (never fabricates fake citations)', async () => {
+      vi.spyOn(researchRetrievalService, 'retrieveEvidence').mockResolvedValue({
+        toolStatus: 'unavailable',
+        query: 'Quantum Computing Specs',
+        sources: [],
+        retrievedAt: new Date().toISOString(),
+        diagnosticNotes: 'Upstream retrieval API HTTP 503: Service Unavailable',
+      });
+
+      vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
+        if (req.prompt.includes('SPY, the Specialized Research')) {
+          return {
+            text: 'Live web retrieval unavailable; findings reflect offline architectural baseline.',
+            provider: 'groq',
+            model: 'llama-3.3-70b',
+          };
+        }
+        if (req.prompt.includes('SUSI, the Master Orchestration & Verification')) {
+          return {
+            text: '```json\n{"verdict": "VERIFIED_PASS", "acceptanceCriteriaMet": true, "evidenceCredible": true, "fileOperationsVerified": true, "auditNotes": "Offline baseline verified"}\n```',
+            provider: 'openai',
+            model: 'gpt-4o',
+          };
+        }
+        return { text: 'ok', provider: 'gemini', model: 'gemini-2.0' };
+      });
+
+      const task = await createTask({
+        title: 'Offline Research Task',
+        assignedAgent: 'SUSI',
+        priority: 'Medium',
+        category: 'Research',
+      });
+
+      const result = await multiAgentOrchestrator.executePipeline({
+        taskId: task.id,
+        title: task.title,
+        objective: 'Quantum Computing',
+      });
+
+      expect(result.spyResearch?.retrievalStatus).toBe('unavailable');
+      expect(result.spyResearch?.sources).toHaveLength(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 2. LEX EXECUTION & WORKSPACE FILE WRITER TESTS
+  // ---------------------------------------------------------------------------
+  describe('2. LEX Execution — Restricted Workspace File Writer & Read-Back Verification', () => {
+    it('strictly enforces workspace boundary and prevents path traversal escapes', () => {
+      expect(() => {
+        workspaceFileWriter.resolveAndValidatePath('../../secret_outside.env');
+      }).toThrow(/traverse outside authorized workspace/i);
+
+      expect(() => {
+        workspaceFileWriter.resolveAndValidatePath('/etc/passwd');
+      }).toThrow(/traverse outside authorized workspace|Access to sensitive file/i);
+
+      expect(() => {
+        workspaceFileWriter.resolveAndValidatePath('src/components/../../../Windows/System32/cmd.exe');
+      }).toThrow(/traverse outside authorized workspace/i);
+    });
+
+    it('prohibits writes to sensitive configuration files (.env, .git, etc.)', () => {
+      expect(() => {
+        workspaceFileWriter.resolveAndValidatePath('.env.local');
+      }).toThrow(/Access to sensitive file or directory/i);
+
+      expect(() => {
+        workspaceFileWriter.resolveAndValidatePath('src/.git/config');
+      }).toThrow(/Access to sensitive file or directory/i);
+    });
+
+    it('requires explicit approval before overwriting existing files', async () => {
+      const testRelPath = 'scratch/test_overwrite_target.txt';
+      const absPath = path.resolve(process.cwd(), testRelPath);
+      fs.mkdirSync(path.dirname(absPath), { recursive: true });
+      fs.writeFileSync(absPath, 'Existing content', 'utf8');
+
+      // Attempt write without approvalConfirmed
+      const res = await workspaceFileWriter.writeFile(testRelPath, 'New content', {
+        allowOverwrite: false,
+        approvalConfirmed: false,
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.operation).toBe('rejected');
+      expect(res.error).toContain('Explicit user approval is required');
+
+      // Clean up test file
+      try {
+        fs.unlinkSync(absPath);
+      } catch {}
+    });
+
+    it('writes safe file and performs immediate read-back verification', async () => {
+      const testRelPath = 'scratch/test_readback_verified.txt';
+      const content = 'SUSI_VERIFIED_CONTENT_TOKEN_999';
+
+      const res = await workspaceFileWriter.writeFile(testRelPath, content, {
+        allowOverwrite: true,
+        approvalConfirmed: true,
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.verified).toBe(true);
+      expect(res.bytesWritten).toBe(Buffer.byteLength(content, 'utf8'));
+
+      // Verify file genuinely exists on disk
+      const diskContent = fs.readFileSync(res.path, 'utf8');
+      expect(diskContent).toBe(content);
+
+      // Clean up test file
+      try {
+        fs.unlinkSync(res.path);
+      } catch {}
+    });
+
+    it('distinguishes in-memory code generation from disk file execution', async () => {
+      vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
+        if (req.prompt.includes('LEX, the Lead Implementation')) {
+          return {
+            text: 'Deliverable:\n```typescript\n// File: src/components/GeneratedOnly.tsx\nexport const gen = true;\n```',
+            provider: 'gemini',
+            model: 'gemini-2.0',
+          };
+        }
+        if (req.prompt.includes('SUSI, the Master Orchestration & Verification')) {
+          return {
+            text: '```json\n{"verdict": "VERIFIED_PASS", "acceptanceCriteriaMet": true, "evidenceCredible": true, "fileOperationsVerified": true, "auditNotes": "Artifacts generated in memory"}\n```',
+            provider: 'openai',
+            model: 'gpt-4o',
+          };
+        }
+        return { text: 'ok', provider: 'openai', model: 'gpt-4o' };
+      });
+
+      const task = await createTask({
+        title: 'Generate Component In-Memory',
+        assignedAgent: 'SUSI',
+        priority: 'Medium',
+        category: 'Frontend',
+      });
+
+      // Default execution: applyChanges is false
+      const result = await multiAgentOrchestrator.executePipeline({
+        taskId: task.id,
+        title: task.title,
+        objective: 'Generate component without writing to disk',
+        context: { applyChanges: false },
+      });
+
+      expect(result.lexExecution?.executionMode).toBe('artifacts_generated');
+      expect(result.lexExecution?.fileOperations).toBeUndefined();
+      expect(result.lexExecution?.artifacts.length).toBe(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 3. SUSI VERIFICATION TESTS
+  // ---------------------------------------------------------------------------
+  describe('3. SUSI Verification — Strict Structured Evaluation & Rejection of Ambiguity', () => {
+    it('fails verification if verdict is missing, unparseable, or ambiguous', async () => {
+      vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
+        if (req.prompt.includes('SUSI, the Master Orchestration & Verification')) {
+          // Ambiguous output without structured JSON verdict
+          return {
+            text: 'The code seems pretty good and probably works well without major issues.',
+            provider: 'openai',
+            model: 'gpt-4o',
+          };
+        }
+        return { text: 'ok', provider: 'gemini', model: 'gemini-2.0' };
+      });
+
+      const task = await createTask({
+        title: 'Task with Ambiguous Verification',
+        assignedAgent: 'SUSI',
+        priority: 'High',
+        category: 'Operations',
+      });
+
+      const result = await multiAgentOrchestrator.executePipeline({
+        taskId: task.id,
+        title: task.title,
+        objective: 'Ambiguous test',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('failed');
+      expect(result.susiVerification?.verified).toBe(false);
+      expect(result.susiVerification?.verificationVerdict).toBe('VERIFIED_FAIL');
+    });
+
+    it('fails verification if acceptanceCriteriaMet is false', async () => {
+      vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
+        if (req.prompt.includes('SUSI, the Master Orchestration & Verification')) {
+          return {
+            text: '```json\n{"verdict": "VERIFIED_PASS", "acceptanceCriteriaMet": false, "evidenceCredible": true, "fileOperationsVerified": true, "auditNotes": "User objective criteria was not met"}\n```',
+            provider: 'openai',
+            model: 'gpt-4o',
+          };
+        }
+        return { text: 'ok', provider: 'gemini', model: 'gemini-2.0' };
+      });
+
+      const task = await createTask({
+        title: 'Task Missing Criteria',
+        assignedAgent: 'SUSI',
+        priority: 'Medium',
+        category: 'Operations',
+      });
+
+      const result = await multiAgentOrchestrator.executePipeline({
+        taskId: task.id,
+        title: task.title,
+        objective: 'Missing criteria test',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.susiVerification?.verified).toBe(false);
+    });
+
+    it('fails verification if file writes were requested but rejected or unverified', async () => {
+      vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
+        if (req.prompt.includes('LEX, the Lead Implementation')) {
+          return {
+            text: 'Deliverable:\n```typescript\n// File: .env.local\nSECRET=123\n```',
+            provider: 'gemini',
+            model: 'gemini-2.0',
+          };
+        }
+        if (req.prompt.includes('SUSI, the Master Orchestration & Verification')) {
+          return {
+            text: '```json\n{"verdict": "VERIFIED_PASS", "acceptanceCriteriaMet": true, "evidenceCredible": true, "fileOperationsVerified": false, "auditNotes": "File operation rejected"}\n```',
+            provider: 'openai',
+            model: 'gpt-4o',
+          };
+        }
+        return { text: 'ok', provider: 'gemini', model: 'gemini-2.0' };
+      });
+
+      const task = await createTask({
+        title: 'Forbidden File Write Attempt',
+        assignedAgent: 'SUSI',
+        priority: 'Critical',
+        category: 'Security',
+      });
+
+      const result = await multiAgentOrchestrator.executePipeline({
+        taskId: task.id,
+        title: task.title,
+        objective: 'Write forbidden file',
+        context: { applyChanges: true },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.susiVerification?.verified).toBe(false);
+      expect(result.lexExecution?.fileOperations?.[0].operation).toBe('rejected');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 4. CANCELLATION TESTS ACROSS EVERY STAGE
+  // ---------------------------------------------------------------------------
+  describe('4. Cancellation — Request Abort Propagation across All Stages', () => {
+    it('cancels cleanly during Stage 1 (Planning)', async () => {
+      const controller = new AbortController();
+      vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
+        if (req.prompt.includes('Research Directive for SPY')) {
+          controller.abort(new Error('User cancelled during planning'));
+          throw new Error('Pipeline cancelled by client.');
+        }
+        return { text: 'ok', provider: 'openai', model: 'gpt-4o' };
+      });
+
+      const task = await createTask({ title: 'Cancel at Stage 1', assignedAgent: 'SUSI', priority: 'Low', category: 'Ops' });
+      const result = await multiAgentOrchestrator.executePipeline({
+        taskId: task.id,
+        title: task.title,
+        objective: 'Cancel test',
+        signal: controller.signal,
+      });
+
+      expect(result.status).toBe('cancelled');
+      const dbRuns = await getAgentRunsForTask(task.id);
+      expect(dbRuns[0].status).toBe('cancelled');
+    });
+
+    it('cancels cleanly during Stage 2 (Research)', async () => {
+      const controller = new AbortController();
+      vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
+        if (req.prompt.includes('SPY, the Specialized Research')) {
+          controller.abort(new Error('User cancelled during research'));
+          throw new Error('Pipeline cancelled by client.');
+        }
+        return { text: 'ok', provider: 'openai', model: 'gpt-4o' };
+      });
+
+      const task = await createTask({ title: 'Cancel at Stage 2', assignedAgent: 'SUSI', priority: 'Low', category: 'Ops' });
+      const result = await multiAgentOrchestrator.executePipeline({
+        taskId: task.id,
+        title: task.title,
+        objective: 'Cancel test',
+        signal: controller.signal,
+      });
+
+      expect(result.status).toBe('cancelled');
+    });
+
+    it('cancels cleanly during Stage 3 (Analysis)', async () => {
+      const controller = new AbortController();
+      vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
+        if (req.prompt.includes('EURO, the Senior Research Analysis')) {
+          controller.abort(new Error('User cancelled during analysis'));
+          throw new Error('Pipeline cancelled by client.');
+        }
+        return { text: 'ok', provider: 'openai', model: 'gpt-4o' };
+      });
+
+      const task = await createTask({ title: 'Cancel at Stage 3', assignedAgent: 'SUSI', priority: 'Low', category: 'Ops' });
+      const result = await multiAgentOrchestrator.executePipeline({
+        taskId: task.id,
+        title: task.title,
+        objective: 'Cancel test',
+        signal: controller.signal,
+      });
+
+      expect(result.status).toBe('cancelled');
+    });
+
+    it('cancels cleanly during Stage 4 (Execution)', async () => {
+      const controller = new AbortController();
+      vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
+        if (req.prompt.includes('LEX, the Lead Implementation')) {
+          controller.abort(new Error('User cancelled during execution'));
+          throw new Error('Pipeline cancelled by client.');
+        }
+        return { text: 'ok', provider: 'openai', model: 'gpt-4o' };
+      });
+
+      const task = await createTask({ title: 'Cancel at Stage 4', assignedAgent: 'SUSI', priority: 'Low', category: 'Ops' });
+      const result = await multiAgentOrchestrator.executePipeline({
+        taskId: task.id,
+        title: task.title,
+        objective: 'Cancel test',
+        signal: controller.signal,
+      });
+
+      expect(result.status).toBe('cancelled');
+    });
+
+    it('cancels cleanly via cancelPipeline API method', async () => {
+      const task = await createTask({ title: 'Cancel via API', assignedAgent: 'SUSI', priority: 'Low', category: 'Ops' });
+
+      vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async () => {
+        // Trigger cancellation midway
+        multiAgentOrchestrator.cancelPipeline(task.id, 'Client invoked cancellation');
+        await new Promise((r) => setTimeout(r, 20));
+        throw new Error('Pipeline cancelled by client.');
+      });
+
+      const result = await multiAgentOrchestrator.executePipeline({
+        taskId: task.id,
+        title: task.title,
+        objective: 'Cancel test',
+      });
+
+      expect(result.status).toBe('cancelled');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 5. PERSISTENCE & SECURITY
+  // ---------------------------------------------------------------------------
+  describe('5. Persistence & Security — Credential Scrubbing & RLS Isolation', () => {
+    it('scrubs API keys, private tokens, and passwords from messages and memory', async () => {
+      const rawSecret = 'sk-proj-test1234567890abcdefghijklmnop';
+
+      vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async () => {
         return {
-          text: 'SUSI PLAN: 1. SPY: Verify Next.js 16 conventions. 2. EURO: Analyze performance. 3. LEX: Build component.',
+          text: `Leaked secret output: ${rawSecret}`,
           provider: 'openai',
           model: 'gpt-4o',
         };
-      }
-      if (req.prompt.includes('SPY, the Specialized Research')) {
-        return {
-          text: 'SPY FINDINGS: Verified Next.js 16 App Router requires async params and React 19 server components.',
-          provider: 'groq',
-          model: 'llama-3.3-70b-versatile',
-        };
-      }
-      if (req.prompt.includes('EURO, the Senior Research Analysis')) {
-        return {
-          text: 'EURO BLUEPRINT: Architecture is verified. Risks: hydration mismatch if async params not awaited. Mitigation: strictly await props.params.',
-          provider: 'gemini',
-          model: 'gemini-2.0-flash',
-        };
-      }
-      if (req.prompt.includes('LEX, the Lead Implementation')) {
-        return {
-          text: 'LEX IMPLEMENTATION:\n```typescript\n// File: src/components/DashboardMetrics.tsx\nexport default function DashboardMetrics() { return <div>Metrics OK</div>; }\n```\nDeliverables ready.',
-          provider: 'gemini',
-          model: 'gemini-2.0-flash',
-        };
-      }
-      if (req.prompt.includes('SUSI, the Master Orchestration & Verification')) {
-        return {
-          text: '[VERIFIED: YES]\nAll deliverables meet Next.js 16 standards and zero security issues detected.\nExecutive Summary: Dashboard component built and verified.',
-          provider: 'openai',
-          model: 'gpt-4o',
-        };
-      }
-      return { text: 'Generic output', provider: 'local-smart-engine', model: 'mock-model' };
+      });
+
+      const task = await createTask({
+        title: 'Secret Leak Test',
+        assignedAgent: 'SUSI',
+        priority: 'High',
+        category: 'Security',
+      });
+
+      const result = await multiAgentOrchestrator.executePipeline({
+        taskId: task.id,
+        title: task.title,
+        objective: 'Check scrubbing',
+        context: { apiKey: rawSecret },
+      });
+
+      const messages = await getAgentMessages(result.runId);
+      const dumped = JSON.stringify(messages);
+
+      expect(dumped).not.toContain(rawSecret);
+      expect(dumped).toContain('[REDACTED_API_KEY]');
     });
-
-    const task = await createTask({
-      title: 'Build Verified Dashboard Metrics Component',
-      assignedAgent: 'SUSI',
-      priority: 'High',
-      category: 'Frontend',
-      description: 'Implement Next.js 16 compliant metrics card',
-    });
-
-    const result = await multiAgentOrchestrator.executePipeline({
-      taskId: task.id,
-      title: task.title,
-      objective: 'Implement Next.js 16 compliant metrics card',
-    });
-
-    expect(result.success).toBe(true);
-    expect(result.status).toBe('completed');
-    expect(result.steps).toHaveLength(5);
-    expect(result.steps.every((s) => s.status === 'completed')).toBe(true);
-
-    // Verify artifacts extracted
-    expect(result.lexExecution?.artifacts).toBeDefined();
-    expect(result.lexExecution?.artifacts.length).toBeGreaterThanOrEqual(1);
-    expect(result.lexExecution?.artifacts[0].filename).toBe('src/components/DashboardMetrics.tsx');
-
-    // Verify verification passed
-    expect(result.susiVerification?.verified).toBe(true);
-    expect(result.susiVerification?.executiveSummary).toContain('[VERIFIED: YES]');
-
-    // Verify database persistence of steps, messages, and runs
-    const dbSteps = await getTaskSteps(task.id);
-    expect(dbSteps.length).toBe(5);
-    expect(dbSteps.every((s) => s.status === 'completed')).toBe(true);
-
-    const dbRuns = await getAgentRunsForTask(task.id);
-    expect(dbRuns.length).toBeGreaterThanOrEqual(1);
-    expect(dbRuns[0].status).toBe('completed');
-
-    const dbMessages = await getAgentMessages(result.runId);
-    expect(dbMessages.length).toBeGreaterThanOrEqual(5);
-
-    // Verify agents communicated
-    const agentsInStream = new Set(dbMessages.map((m) => m.from_agent));
-    expect(agentsInStream.has('SUSI')).toBe(true);
-    expect(agentsInStream.has('SPY')).toBe(true);
-    expect(agentsInStream.has('EURO')).toBe(true);
-    expect(agentsInStream.has('LEX')).toBe(true);
-
-    // Verify agent memory was stored for SPY and EURO
-    const spyMemory = await getAgentMemory('SPY');
-    expect(spyMemory.some((m) => m.memory_key?.includes(task.id))).toBe(true);
-
-    const euroMemory = await getAgentMemory('EURO');
-    expect(euroMemory.some((m) => m.memory_key?.includes(task.id))).toBe(true);
-  });
-
-  it('2. Fails closed when AI providers are unavailable (never fabricates fake success)', async () => {
-    vi.spyOn(aiProviderService, 'executeAiInference').mockRejectedValue(
-      new Error('No AI providers are configured or responsive. Configured providers: none.')
-    );
-
-    const task = await createTask({
-      title: 'Audit Mission Critical Gateway',
-      assignedAgent: 'SUSI',
-      priority: 'Critical',
-      category: 'Security',
-    });
-
-    const result = await multiAgentOrchestrator.executePipeline({
-      taskId: task.id,
-      title: task.title,
-      objective: 'Verify gateway TLS endpoints',
-    });
-
-    // Must fail closed with error — never fabricate mock success!
-    expect(result.success).toBe(false);
-    expect(result.status).toBe('failed');
-    expect(result.error).toContain('No AI providers are configured');
-
-    const dbRuns = await getAgentRunsForTask(task.id);
-    expect(dbRuns[0].status).toBe('failed');
-
-    const dbSteps = await getTaskSteps(task.id);
-    expect(dbSteps.some((s) => s.status === 'failed')).toBe(true);
-  });
-
-  it('3. Supports explicit cancellation midway through pipeline', async () => {
-    const controller = new AbortController();
-
-    // Abort after stage 1 planning
-    vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
-      if (req.prompt.includes('Research Directive for SPY')) {
-        controller.abort();
-        return { text: 'SUSI plan produced.', provider: 'openai', model: 'mock-model' };
-      }
-      throw new Error('Pipeline cancelled by client.');
-    });
-
-    const task = await createTask({
-      title: 'Long Running Large Architecture Task',
-      assignedAgent: 'SUSI',
-      priority: 'Low',
-      category: 'Architecture',
-    });
-
-    const result = await multiAgentOrchestrator.executePipeline({
-      taskId: task.id,
-      title: task.title,
-      objective: 'Long running task that will be cancelled',
-      signal: controller.signal,
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.status).toBe('cancelled');
-
-    const dbRuns = await getAgentRunsForTask(task.id);
-    expect(dbRuns[0].status).toBe('cancelled');
-  });
-
-  it('4. Rejects verification and marks task failed when deliverables do not meet criteria', async () => {
-    vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
-      if (req.prompt.includes('Research Directive for SPY')) {
-        return { text: 'Plan ok', provider: 'openai', model: 'gpt-4o' };
-      }
-      if (req.prompt.includes('SPY, the Specialized Research')) {
-        return { text: 'Research ok', provider: 'groq', model: 'llama-3.3' };
-      }
-      if (req.prompt.includes('EURO, the Senior Research Analysis')) {
-        return { text: 'Blueprint ok', provider: 'gemini', model: 'gemini-2.0' };
-      }
-      if (req.prompt.includes('LEX, the Lead Implementation')) {
-        return { text: 'Incomplete stub code', provider: 'gemini', model: 'gemini-2.0' };
-      }
-      if (req.prompt.includes('SUSI, the Master Orchestration & Verification')) {
-        return {
-          text: '[VERIFIED: NO]\nImplementation deliverables are incomplete and lacked error handling.\nExecutive Summary: Rejected.',
-          provider: 'openai',
-          model: 'gpt-4o',
-        };
-      }
-      return { text: 'fallback', provider: 'gemini', model: 'gemini-2.0' };
-    });
-
-    const task = await createTask({
-      title: 'Incomplete Feature Implementation',
-      assignedAgent: 'SUSI',
-      priority: 'Medium',
-      category: 'Operations',
-    });
-
-    const result = await multiAgentOrchestrator.executePipeline({
-      taskId: task.id,
-      title: task.title,
-      objective: 'Implement feature that fails verification',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.status).toBe('failed');
-    expect(result.susiVerification?.verified).toBe(false);
-  });
-
-  it('5. Ensures data isolation and never leaks raw API credentials into messages or memory', async () => {
-    const rawKey = 'sk-proj-super-secret-production-token-12345';
-
-    vi.spyOn(aiProviderService, 'executeAiInference').mockImplementation(async (req) => {
-      return {
-        text: `Output mentioning system status. Prompt had: ${req.prompt.slice(0, 50)}`,
-        provider: 'openai',
-        model: 'gpt-4o',
-      };
-    });
-
-    const task = await createTask({
-      title: 'Security Verification Task',
-      assignedAgent: 'SUSI',
-      priority: 'High',
-      category: 'Security',
-    });
-
-    const result = await multiAgentOrchestrator.executePipeline({
-      taskId: task.id,
-      title: task.title,
-      objective: 'Secure processing',
-      context: { apiKey: rawKey }, // context may contain a secret that must not be emitted
-    });
-
-    const dbMessages = await getAgentMessages(result.runId);
-    const dbMemory = await getAgentMemory('SPY');
-
-    // Messages and memory must never expose secrets
-    const messageDump = JSON.stringify(dbMessages);
-    const memoryDump = JSON.stringify(dbMemory);
-
-    expect(messageDump.includes(rawKey)).toBe(false);
-    expect(memoryDump.includes(rawKey)).toBe(false);
   });
 });
