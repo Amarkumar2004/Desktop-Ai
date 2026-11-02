@@ -91,3 +91,4 @@ randomBase64DataLine2==
     expect(scrubbedErr.stack).not.toContain('SecretDBPassword123');
   });
 });
+

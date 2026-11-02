@@ -6,7 +6,6 @@ import {
   getAgentRunsForTask,
   getAgentMessages,
   getAgentMemory,
-  getVerifiedInstallationId,
   WorkforceAgentId,
 } from '@/backend/services/agentRuntimeService';
 import { createClient, isSupabaseConfigured } from '@/backend/supabase/client';
@@ -15,10 +14,17 @@ import { validateDesktopAuth } from '@/lib/security/desktopAuth';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+export interface CallerIdentity {
+  type: 'supabase_user' | 'desktop_session';
+  id: string;
+}
+
 /**
- * Resolves the authenticated caller identity: Supabase user, authorized desktop session, or verified local installation.
+ * Resolves caller identity strictly from authenticated credentials.
+ * Rejects Host, Origin, or Tauri-origin string spoofing: only valid Supabase sessions
+ * or cryptographically authenticated desktop sessions are authorized.
  */
-async function resolveCallerIdentity(req: NextRequest) {
+async function resolveCallerIdentity(req: NextRequest): Promise<CallerIdentity | null> {
   // 1. Supabase authenticated user
   if (isSupabaseConfigured()) {
     const supabase = createClient();
@@ -26,27 +32,32 @@ async function resolveCallerIdentity(req: NextRequest) {
       try {
         const { data } = await supabase.auth.getUser();
         if (data?.user?.id) {
-          return { type: 'supabase_user' as const, userId: data.user.id };
+          return { type: 'supabase_user', id: data.user.id };
         }
       } catch {}
     }
   }
 
-  // 2. Desktop session validation
+  // 2. Cryptographically validated Desktop session
   const desktopAuth = validateDesktopAuth(req);
-  if (desktopAuth.authorized) {
-    return { type: 'desktop_session' as const, sessionId: desktopAuth.sessionId };
+  if (desktopAuth.authorized && desktopAuth.sessionId) {
+    return { type: 'desktop_session', id: `desktop:${desktopAuth.sessionId}` };
   }
 
-  // 3. Localhost internal desktop / tauri check
-  const host = req.headers.get('host') || '';
-  const origin = req.headers.get('origin') || '';
-  const isLocalOrigin = host.includes('localhost') || host.includes('127.0.0.1') || origin.includes('tauri');
-  if (isLocalOrigin) {
-    return { type: 'local_desktop' as const, installationId: getVerifiedInstallationId() };
-  }
-
+  // No localhost, Origin, or Host string bypass is permitted.
   return null;
+}
+
+/**
+ * Strictly verifies that the target task is owned by the authenticated caller.
+ * Never allows unknown or missing owners to count as permission.
+ */
+async function verifyTaskOwnership(taskId: string, callerId: string): Promise<boolean> {
+  if (!taskId || !callerId) return false;
+  const tasks = await getTasks();
+  const task = tasks.find((t) => t.id === taskId);
+  if (!task || !task.userId) return false;
+  return task.userId === callerId;
 }
 
 /**
@@ -58,7 +69,7 @@ export async function POST(req: NextRequest) {
     const caller = await resolveCallerIdentity(req);
     if (!caller) {
       return NextResponse.json(
-        { success: false, error: 'Unauthorized: Authentication or valid desktop session required.' },
+        { success: false, error: 'Unauthorized: Valid Supabase session or authenticated desktop session required.' },
         { status: 401 }
       );
     }
@@ -75,16 +86,13 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Verify task ownership for authenticated users
-      if (caller.type === 'supabase_user') {
-        const userTasks = await getTasks({ userId: caller.userId });
-        const ownsTask = userTasks.some((t) => t.id === targetTaskId);
-        if (!ownsTask) {
-          return NextResponse.json(
-            { success: false, error: 'Forbidden: You do not have permission to cancel this task.' },
-            { status: 403 }
-          );
-        }
+      // Enforce ownership for every caller type
+      const isOwner = await verifyTaskOwnership(targetTaskId, caller.id);
+      if (!isOwner) {
+        return NextResponse.json(
+          { success: false, error: 'Forbidden: You do not have permission to cancel this task.' },
+          { status: 403 }
+        );
       }
 
       const cancelled = multiAgentOrchestrator.cancelPipeline(
@@ -106,27 +114,24 @@ export async function POST(req: NextRequest) {
     const context = body.context || {};
     let taskId = (body.taskId as string)?.trim();
 
-    // If existing taskId provided, verify ownership
-    if (taskId && caller.type === 'supabase_user') {
-      const userTasks = await getTasks({ userId: caller.userId });
-      const ownsTask = userTasks.some((t) => t.id === taskId);
-      if (!ownsTask) {
+    // If existing taskId provided, verify caller owns it
+    if (taskId) {
+      const isOwner = await verifyTaskOwnership(taskId, caller.id);
+      if (!isOwner) {
         return NextResponse.json(
           { success: false, error: 'Forbidden: You do not have permission to execute this task.' },
           { status: 403 }
         );
       }
-    }
-
-    // If no existing task, create a genuine task row bound to caller
-    if (!taskId) {
+    } else {
+      // Create new task bound to caller
       const created = await createTask({
         title,
         assignedAgent: 'SUSI',
         priority: (body.priority as 'Critical' | 'High' | 'Medium' | 'Low') || 'High',
         category: 'Operations',
         description: objective,
-        userId: caller.type === 'supabase_user' ? caller.userId : undefined,
+        userId: caller.id,
       });
       taskId = created.id;
     }
@@ -136,6 +141,7 @@ export async function POST(req: NextRequest) {
       taskId,
       title,
       objective,
+      userId: caller.id,
       context,
       signal: req.signal,
     });
@@ -158,7 +164,7 @@ export async function POST(req: NextRequest) {
 
 /**
  * DELETE /api/agents/orchestrate?taskId=...
- * Immediately aborts an in-flight pipeline for the specified task with ownership check.
+ * Immediately aborts an in-flight pipeline for the specified task with mandatory ownership check.
  */
 export async function DELETE(req: NextRequest) {
   try {
@@ -179,16 +185,13 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    // Verify task ownership for authenticated users
-    if (caller.type === 'supabase_user') {
-      const userTasks = await getTasks({ userId: caller.userId });
-      const ownsTask = userTasks.some((t) => t.id === taskId);
-      if (!ownsTask) {
-        return NextResponse.json(
-          { success: false, error: 'Forbidden: You do not have permission to cancel this task.' },
-          { status: 403 }
-        );
-      }
+    // Enforce ownership for every caller type
+    const isOwner = await verifyTaskOwnership(taskId, caller.id);
+    if (!isOwner) {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden: You do not have permission to cancel this task.' },
+        { status: 403 }
+      );
     }
 
     const cancelled = multiAgentOrchestrator.cancelPipeline(taskId, 'Pipeline cancelled via HTTP DELETE.');
@@ -218,7 +221,7 @@ export async function GET(req: NextRequest) {
     const caller = await resolveCallerIdentity(req);
     if (!caller) {
       return NextResponse.json(
-        { success: false, error: 'Unauthorized: Authentication required.' },
+        { success: false, error: 'Unauthorized: Valid authentication required.' },
         { status: 401 }
       );
     }
@@ -237,10 +240,10 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      // Check ownership for authenticated user
-      if (caller.type === 'supabase_user' && run.user_id && run.user_id !== caller.userId) {
+      // Verify ownership before returning run or messages
+      if (!run.user_id || run.user_id !== caller.id) {
         return NextResponse.json(
-          { success: false, error: 'Forbidden: You do not have permission to view this run.' },
+          { success: false, error: 'Forbidden: You do not have permission to view this run or its messages.' },
           { status: 403 }
         );
       }
@@ -253,16 +256,13 @@ export async function GET(req: NextRequest) {
     }
 
     if (taskId) {
-      // Check ownership for authenticated user
-      if (caller.type === 'supabase_user') {
-        const userTasks = await getTasks({ userId: caller.userId });
-        const ownsTask = userTasks.some((t) => t.id === taskId);
-        if (!ownsTask) {
-          return NextResponse.json(
-            { success: false, error: 'Forbidden: You do not have permission to view this task.' },
-            { status: 403 }
-          );
-        }
+      // Enforce ownership for every caller type
+      const isOwner = await verifyTaskOwnership(taskId, caller.id);
+      if (!isOwner) {
+        return NextResponse.json(
+          { success: false, error: 'Forbidden: You do not have permission to view this task.' },
+          { status: 403 }
+        );
       }
 
       const runs = await getAgentRunsForTask(taskId);
@@ -285,14 +285,12 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Default: return recent active tasks belonging to this user
-    const filteredTasks = await getTasks(
-      caller.type === 'supabase_user' ? { userId: caller.userId } : undefined
-    );
+    // Default: return recent active tasks belonging to this caller
+    const callerTasks = await getTasks({ userId: caller.id });
 
     return NextResponse.json({
-      activeTasksCount: filteredTasks.length,
-      tasks: filteredTasks.slice(0, 10),
+      activeTasksCount: callerTasks.length,
+      tasks: callerTasks.slice(0, 10),
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

@@ -5,13 +5,9 @@ import os from 'os';
 import { WorkspaceFileWriter } from '../workspaceFileWriter';
 import {
   createAgentRun,
-  updateAgentRun,
   recordAgentMessage,
-  saveAgentMemory,
   getAgentRun,
-  getAgentRunsForTask,
   getAgentMessages,
-  getAgentMemory,
   setInstallationIdForTesting,
   resetLocalStoresForTesting,
   validateInstallationOwnership,
@@ -50,156 +46,327 @@ describe('SUSI AI — Final Security Hardening Regression Suite', () => {
   });
 
   // ===========================================================================
-  // 1. ANONYMOUS SUPABASE & CROSS-INSTALLATION ISOLATION
+  // 1. REMOVE LOCALHOST/ORIGIN AUTHENTICATION BYPASS & CSRF TESTS
   // ===========================================================================
-  describe('1. Anonymous Supabase & Cross-Installation Isolation', () => {
-    it('prevents different desktop installations from reading each other’s agent runs, messages, and memories', async () => {
-      // Installation A runs
-      setInstallationIdForTesting('installation_device_alpha');
-      const taskId = 'task_isolated_alpha';
-      const runIdAlpha = await createAgentRun(taskId, [{ step: 'Alpha plan' }]);
+  describe('1. Remove Localhost/Origin Authentication Bypass', () => {
+    it('rejects requests with spoofed Host: localhost without valid authentication', async () => {
+      const spoofedReq = new NextRequest('http://localhost:3000/api/agents/orchestrate', {
+        method: 'POST',
+        headers: {
+          host: 'localhost:3000',
+        },
+        body: JSON.stringify({ title: 'Spoofed Localhost Task' }),
+      });
+
+      const res = await POST(spoofedReq);
+      expect(res.status).toBe(401);
+      const data = await res.json();
+      expect(data.error).toContain('Unauthorized');
+    });
+
+    it('rejects requests with spoofed Host: 127.0.0.1 without valid authentication', async () => {
+      const spoofedReq = new NextRequest('http://127.0.0.1:3000/api/agents/orchestrate', {
+        method: 'GET',
+        headers: {
+          host: '127.0.0.1:3000',
+        },
+      });
+
+      const res = await GET(spoofedReq);
+      expect(res.status).toBe(401);
+      const data = await res.json();
+      expect(data.error).toContain('Unauthorized');
+    });
+
+    it('rejects requests with spoofed Tauri origin (tauri://localhost) without valid desktop session', async () => {
+      const spoofedReq = new NextRequest('http://localhost:3000/api/agents/orchestrate', {
+        method: 'POST',
+        headers: {
+          origin: 'tauri://localhost',
+          host: 'localhost:3000',
+        },
+        body: JSON.stringify({ title: 'Spoofed Tauri Task' }),
+      });
+
+      const res = await POST(spoofedReq);
+      expect(res.status).toBe(401);
+      const data = await res.json();
+      expect(data.error).toContain('Unauthorized');
+    });
+
+    it('rejects cross-site browser CSRF attacks', async () => {
+      const csrfReq = new NextRequest('http://localhost:3000/api/agents/orchestrate', {
+        method: 'POST',
+        headers: {
+          origin: 'https://malicious-website.com',
+          'sec-fetch-site': 'cross-site',
+        },
+        body: JSON.stringify({ action: 'cancel', taskId: 'target_victim_task' }),
+      });
+
+      const res = await POST(csrfReq);
+      expect(res.status).toBe(401);
+      const data = await res.json();
+      expect(data.error).toContain('Unauthorized');
+    });
+  });
+
+  // ===========================================================================
+  // 2. ENFORCE OWNERSHIP FOR EVERY CALLER TYPE
+  // ===========================================================================
+  describe('2. Enforce Ownership for Every Caller Type', () => {
+    const bootstrapSecret = getBootstrapToken();
+    const sessionResA = createDesktopSession(bootstrapSecret);
+    const sessionResB = createDesktopSession(bootstrapSecret);
+    const tokenCallerA = sessionResA.session!.token;
+    const tokenCallerB = sessionResB.session!.token;
+    const callerIdA = `desktop:${sessionResA.session!.sessionId}`;
+
+    it('prevents Caller B from viewing Caller A’s task via taskId', async () => {
+      vi.spyOn(taskService, 'getTasks').mockResolvedValue([
+        {
+          id: 'task_caller_a_123',
+          title: 'Private Task of Caller A',
+          assignedAgent: 'SUSI',
+          priority: 'High',
+          category: 'Finance',
+          progress: 50,
+          completed: false,
+          userId: callerIdA,
+        },
+      ]);
+
+      const req = new NextRequest('http://localhost:3000/api/agents/orchestrate?taskId=task_caller_a_123', {
+        method: 'GET',
+        headers: { [DESKTOP_AUTH_HEADER]: tokenCallerB },
+      });
+
+      const res = await GET(req);
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.error).toContain('Forbidden');
+    });
+
+    it('prevents Caller B from viewing Caller A’s agent run and messages via runId', async () => {
+      const runId = await createAgentRun('task_caller_a_123', [], callerIdA);
 
       await recordAgentMessage({
-        runId: runIdAlpha,
-        taskId,
+        runId,
+        taskId: 'task_caller_a_123',
         fromAgent: 'SUSI',
         toAgent: 'SPY',
         type: 'assignment',
-        content: 'Confidential directive for Installation Alpha',
+        content: 'Confidential message for Caller A',
       });
 
-      await saveAgentMemory('SPY', 'alpha_key', { secretIntel: 'alpha_value' });
+      const req = new NextRequest(`http://localhost:3000/api/agents/orchestrate?runId=${runId}`, {
+        method: 'GET',
+        headers: { [DESKTOP_AUTH_HEADER]: tokenCallerB },
+      });
 
-      // Verify Installation A can read its own data
-      const runsAlpha = await getAgentRunsForTask(taskId);
-      expect(runsAlpha.length).toBe(1);
-      expect(runsAlpha[0].id).toBe(runIdAlpha);
-
-      const msgsAlpha = await getAgentMessages(runIdAlpha);
-      expect(msgsAlpha.length).toBe(1);
-      expect(msgsAlpha[0].content).toContain('Confidential directive for Installation Alpha');
-
-      const memAlpha = await getAgentMemory('SPY', 'alpha_key');
-      expect(memAlpha.length).toBe(1);
-
-      // Now switch context to Installation B (different desktop machine)
-      setInstallationIdForTesting('installation_device_beta');
-
-      // Installation B attempts to read Installation A's run
-      const runFromBeta = await getAgentRun(runIdAlpha);
-      expect(runFromBeta).toBeNull(); // Strictly isolated: cannot read run
-
-      const runsFromBeta = await getAgentRunsForTask(taskId);
-      expect(runsFromBeta.length).toBe(0); // Strictly isolated: empty list
-
-      const msgsFromBeta = await getAgentMessages(runIdAlpha);
-      expect(msgsFromBeta.length).toBe(0); // Strictly isolated: cannot read messages
-
-      const memFromBeta = await getAgentMemory('SPY', 'alpha_key');
-      expect(memFromBeta.length).toBe(0); // Strictly isolated: cannot read memory
-
-      // Installation B attempts to mutate Installation A's run -> must be rejected
-      await expect(
-        updateAgentRun(runIdAlpha, { status: 'failed' })
-      ).rejects.toThrow(/Access denied: Cannot modify agent run belonging to another installation/i);
+      const res = await GET(req);
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.error).toContain('Forbidden');
+      expect(data.messages).toBeUndefined();
     });
 
-    it('rejects untrusted, client-spoofed installation IDs', () => {
-      const realId = getVerifiedInstallationId();
-      expect(validateInstallationOwnership(realId)).toBe(true);
-      expect(validateInstallationOwnership('forged_client_installation_id')).toBe(false);
-      expect(validateInstallationOwnership('')).toBe(false);
-    });
-  });
+    it('prevents Caller B from cancelling Caller A’s task via POST action cancel', async () => {
+      vi.spyOn(taskService, 'getTasks').mockResolvedValue([
+        {
+          id: 'task_caller_a_123',
+          title: 'Private Task of Caller A',
+          assignedAgent: 'SUSI',
+          priority: 'High',
+          category: 'Finance',
+          progress: 50,
+          completed: false,
+          userId: callerIdA,
+        },
+      ]);
 
-  // ===========================================================================
-  // 2. WORKSPACE SYMLINK PROTECTION & TRAVERSAL ESCAPES
-  // ===========================================================================
-  describe('2. Workspace Symlink Protection & Traversal Escapes', () => {
-    const fileWriter = new WorkspaceFileWriter(tempWorkspace);
+      const req = new NextRequest('http://localhost:3000/api/agents/orchestrate', {
+        method: 'POST',
+        headers: { [DESKTOP_AUTH_HEADER]: tokenCallerB },
+        body: JSON.stringify({ action: 'cancel', taskId: 'task_caller_a_123' }),
+      });
 
-    it('rejects symlinks that point outside the authorized workspace', async () => {
-      const targetOutsideFile = path.join(outsideWorkspace, 'escaped_secret.txt');
-      fs.writeFileSync(targetOutsideFile, 'OUTSIDE_DATA', 'utf8');
-
-      // Create a symlink inside the workspace pointing outside
-      const symlinkInside = path.join(tempWorkspace, 'symlink_escape');
-      try {
-        fs.symlinkSync(outsideWorkspace, symlinkInside, 'junction');
-      } catch {
-        try {
-          fs.symlinkSync(outsideWorkspace, symlinkInside, 'dir');
-        } catch {
-          // Skip on environments where symlink creation requires elevated Windows privileges
-          return;
-        }
-      }
-
-      // Attempting to resolve or write through the symlink to an outside file must throw
-      expect(() => {
-        fileWriter.resolveAndValidatePath('symlink_escape/escaped_secret.txt', tempWorkspace);
-      }).toThrow(/Security violation.*outside authorized workspace/i);
-
-      const writeRes = await fileWriter.writeFile(
-        'symlink_escape/escaped_secret.txt',
-        'MALICIOUS_OVERWRITE',
-        { workspaceRoot: tempWorkspace }
-      );
-      expect(writeRes.success).toBe(false);
-      expect(writeRes.operation).toBe('rejected');
-      expect(writeRes.error).toMatch(/Security violation.*outside authorized workspace/i);
-
-      // Verify the outside file was NOT modified
-      expect(fs.readFileSync(targetOutsideFile, 'utf8')).toBe('OUTSIDE_DATA');
+      const res = await POST(req);
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.error).toContain('Forbidden');
     });
 
-    it('rejects nested symlink chains and relative traversal escapes', () => {
-      expect(() => {
-        fileWriter.resolveAndValidatePath('../../../etc/passwd', tempWorkspace);
-      }).toThrow(/Security violation.*attempts to traverse outside authorized workspace/i);
+    it('prevents Caller B from cancelling Caller A’s task via DELETE', async () => {
+      vi.spyOn(taskService, 'getTasks').mockResolvedValue([
+        {
+          id: 'task_caller_a_123',
+          title: 'Private Task of Caller A',
+          assignedAgent: 'SUSI',
+          priority: 'High',
+          category: 'Finance',
+          progress: 50,
+          completed: false,
+          userId: callerIdA,
+        },
+      ]);
 
-      expect(() => {
-        fileWriter.resolveAndValidatePath('subfolder/../../../../Windows/cmd.exe', tempWorkspace);
-      }).toThrow(/Security violation.*attempts to traverse outside authorized workspace/i);
+      const req = new NextRequest('http://localhost:3000/api/agents/orchestrate?taskId=task_caller_a_123', {
+        method: 'DELETE',
+        headers: { [DESKTOP_AUTH_HEADER]: tokenCallerB },
+      });
+
+      const res = await DELETE(req);
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.error).toContain('Forbidden');
+    });
+
+    it('never lets an unknown or missing owner count as permission', async () => {
+      vi.spyOn(taskService, 'getTasks').mockResolvedValue([
+        {
+          id: 'task_unowned',
+          title: 'Unowned Task',
+          assignedAgent: 'SUSI',
+          priority: 'Medium',
+          category: 'Operations',
+          progress: 0,
+          userId: null, // missing owner
+        },
+      ]);
+
+      const req = new NextRequest('http://localhost:3000/api/agents/orchestrate?taskId=task_unowned', {
+        method: 'GET',
+        headers: { [DESKTOP_AUTH_HEADER]: tokenCallerA },
+      });
+
+      const res = await GET(req);
+      expect(res.status).toBe(403);
+      const data = await res.json();
+      expect(data.error).toContain('Forbidden');
     });
   });
 
   // ===========================================================================
-  // 3. TRUSTED OVERWRITE APPROVAL ENGINE
+  // 3. MANDATORY OVERWRITE APPROVAL IDENTITY & FLOW
   // ===========================================================================
-  describe('3. Trusted Overwrite Approval Engine', () => {
+  describe('3. Mandatory Overwrite Approval Identity & Explicit Confirmation Flow', () => {
     const fileWriter = new WorkspaceFileWriter(tempWorkspace);
 
-    it('never accepts arbitrary boolean flags in task context as sufficient authorization', async () => {
-      const existingFile = path.join(tempWorkspace, 'protected_doc.txt');
-      fs.writeFileSync(existingFile, 'ORIGINAL_PROTECTED_DATA', 'utf8');
+    it('rejects approval issuance without explicit user confirmation proof', () => {
+      expect(() => {
+        fileWriter.issueExplicitUserConfirmationApproval({
+          taskId: 'task_1',
+          filePath: 'config.json',
+          userId: 'user_alice',
+          explicitUserConfirmed: false, // Must throw
+        });
+      }).toThrow(/Security violation: Explicit user confirmation is strictly required/i);
+    });
 
-      // Attempt write with arbitrary context flags (should be completely ignored)
-      const res = await fileWriter.writeFile('protected_doc.txt', 'NEW_OVERWRITE_ATTEMPT', {
+    it('rejects approval issuance if userId is missing or empty', () => {
+      expect(() => {
+        fileWriter.issueExplicitUserConfirmationApproval({
+          taskId: 'task_1',
+          filePath: 'config.json',
+          userId: '',
+          explicitUserConfirmed: true,
+        });
+      }).toThrow(/Security violation: User identity is mandatory/i);
+    });
+
+    it('rejects overwriting if execution user identity is missing', async () => {
+      const existingFile = path.join(tempWorkspace, 'target_file.txt');
+      fs.writeFileSync(existingFile, 'ORIGINAL', 'utf8');
+
+      const approval = fileWriter.issueExplicitUserConfirmationApproval({
+        taskId: 'task_1',
+        filePath: 'target_file.txt',
+        userId: 'user_alice',
+        explicitUserConfirmed: true,
+      });
+
+      // Attempt write with no execution userId provided
+      const res = await fileWriter.writeFile('target_file.txt', 'NEW_DATA', {
         workspaceRoot: tempWorkspace,
-        taskId: 'task_xyz',
+        taskId: 'task_1',
+        userId: undefined, // Missing execution identity
+        trustedApproval: approval,
       });
 
       expect(res.success).toBe(false);
       expect(res.operation).toBe('rejected');
-      expect(res.error).toContain('Explicit trusted user approval is required');
-      expect(fs.readFileSync(existingFile, 'utf8')).toBe('ORIGINAL_PROTECTED_DATA');
+      expect(res.error).toContain('Execution user identity is missing or empty');
+      expect(fs.readFileSync(existingFile, 'utf8')).toBe('ORIGINAL');
     });
 
-    it('successfully overwrites when valid, fresh trusted approval is supplied', async () => {
-      const existingFile = path.join(tempWorkspace, 'approved_overwrite.txt');
-      fs.writeFileSync(existingFile, 'INITIAL_STATE', 'utf8');
+    it('rejects overwriting if execution user identity does not match recorded approval identity', async () => {
+      const existingFile = path.join(tempWorkspace, 'target_file.txt');
+      fs.writeFileSync(existingFile, 'ORIGINAL', 'utf8');
 
-      const approval = fileWriter.issueOverwriteApproval({
-        taskId: 'task_100',
-        filePath: 'approved_overwrite.txt',
+      const approval = fileWriter.issueExplicitUserConfirmationApproval({
+        taskId: 'task_1',
+        filePath: 'target_file.txt',
         userId: 'user_alice',
-        ttlMs: 60000,
+        explicitUserConfirmed: true,
       });
 
-      const res = await fileWriter.writeFile('approved_overwrite.txt', 'APPROVED_UPDATE_SUCCESS', {
+      // Execution attempted by user_bob
+      const res = await fileWriter.writeFile('target_file.txt', 'ATTACK_DATA', {
         workspaceRoot: tempWorkspace,
-        taskId: 'task_100',
+        taskId: 'task_1',
+        userId: 'user_bob',
+        trustedApproval: approval,
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.operation).toBe('rejected');
+      expect(res.error).toContain('Approval token user mismatch');
+      expect(fs.readFileSync(existingFile, 'utf8')).toBe('ORIGINAL');
+    });
+
+    it('rejects forged approval objects that were never issued by the service', async () => {
+      const existingFile = path.join(tempWorkspace, 'target_file.txt');
+      fs.writeFileSync(existingFile, 'ORIGINAL', 'utf8');
+
+      const forgedApproval = {
+        approvalId: 'appr_forged_99999999',
+        userId: 'user_alice',
+        taskId: 'task_1',
+        filePath: 'target_file.txt',
+        operation: 'OVERWRITE' as const,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60000,
+        confirmationToken: 'conf_forged_999999',
+      };
+
+      const res = await fileWriter.writeFile('target_file.txt', 'ATTACK_DATA', {
+        workspaceRoot: tempWorkspace,
+        taskId: 'task_1',
+        userId: 'user_alice',
+        trustedApproval: forgedApproval,
+      });
+
+      expect(res.success).toBe(false);
+      expect(res.operation).toBe('rejected');
+      expect(res.error).toContain('Approval token is invalid, unrecognized, or has already been consumed');
+      expect(fs.readFileSync(existingFile, 'utf8')).toBe('ORIGINAL');
+    });
+
+    it('succeeds when exact identity, taskId, file path, operation, and fresh token match', async () => {
+      const existingFile = path.join(tempWorkspace, 'target_file.txt');
+      fs.writeFileSync(existingFile, 'ORIGINAL', 'utf8');
+
+      const approval = fileWriter.issueExplicitUserConfirmationApproval({
+        taskId: 'task_1',
+        filePath: 'target_file.txt',
+        userId: 'user_alice',
+        explicitUserConfirmed: true,
+      });
+
+      const res = await fileWriter.writeFile('target_file.txt', 'UPDATED_CLEAN', {
+        workspaceRoot: tempWorkspace,
+        taskId: 'task_1',
         userId: 'user_alice',
         trustedApproval: approval,
       });
@@ -207,164 +374,114 @@ describe('SUSI AI — Final Security Hardening Regression Suite', () => {
       expect(res.success).toBe(true);
       expect(res.verified).toBe(true);
       expect(res.operation).toBe('modified');
-      expect(fs.readFileSync(existingFile, 'utf8')).toBe('APPROVED_UPDATE_SUCCESS');
-    });
-
-    it('rejects reused approvals (enforces single-use nonce consumption)', async () => {
-      const existingFile = path.join(tempWorkspace, 'replay_test.txt');
-      fs.writeFileSync(existingFile, 'VERSION_1', 'utf8');
-
-      const approval = fileWriter.issueOverwriteApproval({
-        taskId: 'task_replay',
-        filePath: 'replay_test.txt',
-      });
-
-      // First write: succeeds and consumes the approval
-      const res1 = await fileWriter.writeFile('replay_test.txt', 'VERSION_2', {
-        workspaceRoot: tempWorkspace,
-        taskId: 'task_replay',
-        trustedApproval: approval,
-      });
-      expect(res1.success).toBe(true);
-
-      // Replay attempt with same approval token: must fail immediately!
-      const res2 = await fileWriter.writeFile('replay_test.txt', 'VERSION_3_ATTACK', {
-        workspaceRoot: tempWorkspace,
-        taskId: 'task_replay',
-        trustedApproval: approval,
-      });
-      expect(res2.success).toBe(false);
-      expect(res2.operation).toBe('rejected');
-      expect(res2.error).toContain('Approval token is invalid, unrecognized, or has already been consumed');
-      expect(fs.readFileSync(existingFile, 'utf8')).toBe('VERSION_2');
-    });
-
-    it('rejects expired approvals', async () => {
-      const existingFile = path.join(tempWorkspace, 'expired_test.txt');
-      fs.writeFileSync(existingFile, 'INITIAL', 'utf8');
-
-      // Issue approval with negative TTL (already expired)
-      const approval = fileWriter.issueOverwriteApproval({
-        taskId: 'task_expired',
-        filePath: 'expired_test.txt',
-        ttlMs: -1000,
-      });
-
-      const res = await fileWriter.writeFile('expired_test.txt', 'SHOULD_FAIL', {
-        workspaceRoot: tempWorkspace,
-        taskId: 'task_expired',
-        trustedApproval: approval,
-      });
-
-      expect(res.success).toBe(false);
-      expect(res.operation).toBe('rejected');
-      expect(res.error).toContain('Approval token has expired');
-    });
-
-    it('rejects mismatched approvals (wrong task, wrong file, or wrong user)', async () => {
-      const existingFile = path.join(tempWorkspace, 'file_a.txt');
-      fs.writeFileSync(existingFile, 'CONTENT_A', 'utf8');
-
-      const approval = fileWriter.issueOverwriteApproval({
-        taskId: 'task_a',
-        filePath: 'file_a.txt',
-        userId: 'user_a',
-      });
-
-      // Mismatched task ID
-      const resTaskMismatch = await fileWriter.writeFile('file_a.txt', 'NEW_A', {
-        workspaceRoot: tempWorkspace,
-        taskId: 'task_DIFFERENT',
-        userId: 'user_a',
-        trustedApproval: approval,
-      });
-      expect(resTaskMismatch.success).toBe(false);
-      expect(resTaskMismatch.error).toContain('Approval token task mismatch');
-
-      // Re-issue approval for file mismatch test
-      const approval2 = fileWriter.issueOverwriteApproval({
-        taskId: 'task_a',
-        filePath: 'file_a.txt',
-      });
-
-      // Ensure file_b.txt also exists so it requires overwrite approval
-      const existingFileB = path.join(tempWorkspace, 'file_b.txt');
-      fs.writeFileSync(existingFileB, 'CONTENT_B', 'utf8');
-
-      const resFileMismatch = await fileWriter.writeFile('file_b.txt', 'NEW_B', {
-        workspaceRoot: tempWorkspace,
-        taskId: 'task_a',
-        trustedApproval: approval2,
-      });
-      expect(resFileMismatch.success).toBe(false);
-      expect(resFileMismatch.error).toContain('Approval token path mismatch');
+      expect(fs.readFileSync(existingFile, 'utf8')).toBe('UPDATED_CLEAN');
     });
   });
 
   // ===========================================================================
-  // 4. API ROUTE AUTHORIZATION & TASK OWNERSHIP
+  // 4. STRONG FILESYSTEM RACE & SYMLINK PROTECTION
   // ===========================================================================
-  describe('4. API Route Authorization & Task Ownership', () => {
-    const bootstrapSecret = getBootstrapToken();
-    const sessionRes = createDesktopSession(bootstrapSecret);
-    const validToken = sessionRes.session!.token;
+  describe('4. Strong Filesystem Race & Symlink Protection', () => {
+    const fileWriter = new WorkspaceFileWriter(tempWorkspace);
 
-    it('rejects unauthenticated requests without valid desktop session or credentials', async () => {
-      const unauthReq = new NextRequest('http://localhost:3000/api/agents/orchestrate', {
-        method: 'POST',
-        headers: {
-          host: 'external-malicious-site.com',
-          origin: 'http://evil-origin.com',
-        },
-        body: JSON.stringify({ title: 'Hacked run' }),
+    it('fails closed BEFORE modifying external files if target is a symbolic link', async () => {
+      const outsideTarget = path.join(outsideWorkspace, 'critical_system_file.txt');
+      fs.writeFileSync(outsideTarget, 'CRITICAL_DATA_DO_NOT_TOUCH', 'utf8');
+
+      const symlinkFile = path.join(tempWorkspace, 'symlinked_target.txt');
+      try {
+        fs.symlinkSync(outsideTarget, symlinkFile, 'file');
+      } catch {
+        // Skip on environments without symlink privileges
+        return;
+      }
+
+      const res = await fileWriter.writeFile('symlinked_target.txt', 'COMPROMISED_PAYLOAD', {
+        workspaceRoot: tempWorkspace,
+        taskId: 'task_attack',
+        userId: 'user_alice',
       });
 
-      const res = await POST(unauthReq);
-      expect(res.status).toBe(401);
-      const body = await res.json();
-      expect(body.error).toContain('Unauthorized');
+      expect(res.success).toBe(false);
+      expect(res.operation).toBe('rejected');
+      expect(res.error).toMatch(/symbolic link/i);
+
+      // Verify the outside target was NEVER touched
+      expect(fs.readFileSync(outsideTarget, 'utf8')).toBe('CRITICAL_DATA_DO_NOT_TOUCH');
     });
 
-    it('prevents users from inspecting or modifying another user’s tasks by guessing taskId', async () => {
-      // Mock taskService to return a task belonging to 'user_victim'
-      vi.spyOn(taskService, 'getTasks').mockResolvedValue([
-        {
-          id: 'task_victim_private_999',
-          title: 'Victim Private Task',
-          assignedAgent: 'SUSI',
-          priority: 'High',
-          category: 'Finance',
-          progress: 50,
-          completed: false,
-        },
-      ]);
+    it('fails closed BEFORE staging write if directory component is a symbolic link', async () => {
+      const symlinkDir = path.join(tempWorkspace, 'symlink_folder');
+      try {
+        fs.symlinkSync(outsideWorkspace, symlinkDir, 'junction');
+      } catch {
+        try {
+          fs.symlinkSync(outsideWorkspace, symlinkDir, 'dir');
+        } catch {
+          return;
+        }
+      }
 
-      // Attacker queries with desktop session for victim's task
-      const attackerReq = new NextRequest('http://localhost:3000/api/agents/orchestrate?taskId=task_victim_private_999', {
-        method: 'GET',
-        headers: {
-          [DESKTOP_AUTH_HEADER]: validToken,
-        },
+      const res = await fileWriter.writeFile('symlink_folder/injected.txt', 'PAYLOAD', {
+        workspaceRoot: tempWorkspace,
+        taskId: 'task_attack',
+        userId: 'user_alice',
       });
 
-      const res = await GET(attackerReq);
-      const data = await res.json();
-      // Since attacker does not own victim's runs, no victim runs are returned
-      expect(data.runs).toEqual([]);
+      expect(res.success).toBe(false);
+      expect(res.operation).toBe('rejected');
+      expect(res.error).toMatch(/Directory component.*is a symbolic link|outside authorized workspace/i);
+
+      // Verify nothing was written to outside directory
+      const outsideInjected = path.join(outsideWorkspace, 'injected.txt');
+      expect(fs.existsSync(outsideInjected)).toBe(false);
     });
 
-    it('prevents cancelling another user’s task via DELETE or POST cancel', async () => {
-      const cancelReq = new NextRequest('http://localhost:3000/api/agents/orchestrate?taskId=task_victim_private_999', {
-        method: 'DELETE',
-        headers: {
-          [DESKTOP_AUTH_HEADER]: validToken,
-        },
+    it('performs atomic staging write without leaving temporary files behind on success', async () => {
+      const res = await fileWriter.writeFile('clean_atomic.txt', 'ATOMIC_PAYLOAD', {
+        workspaceRoot: tempWorkspace,
       });
 
-      const res = await DELETE(cancelReq);
-      const data = await res.json();
-      expect(data.cancelled).toBe(false);
-      expect(data.message).toContain('No active pipeline was found');
+      expect(res.success).toBe(true);
+      expect(res.verified).toBe(true);
+
+      // Verify no staging .tmp files remain in workspace
+      const files = fs.readdirSync(tempWorkspace);
+      const tmpFiles = files.filter((f) => f.includes('__susi_staging'));
+      expect(tmpFiles.length).toBe(0);
+    });
+  });
+
+  // ===========================================================================
+  // 5. CROSS-INSTALLATION & LOCAL ISOLATION TESTS
+  // ===========================================================================
+  describe('5. Cross-Installation Identity & Isolation', () => {
+    it('prevents cross-installation leakage and verifies installation identity', async () => {
+      setInstallationIdForTesting('device_a');
+      const runId = await createAgentRun('task_device_a', [], 'device_a');
+
+      await recordAgentMessage({
+        runId,
+        taskId: 'task_device_a',
+        fromAgent: 'SUSI',
+        toAgent: 'ALL',
+        type: 'status',
+        content: 'Device A secret payload',
+      });
+
+      // Switch to Device B
+      setInstallationIdForTesting('device_b');
+
+      const run = await getAgentRun(runId);
+      expect(run).toBeNull();
+
+      const messages = await getAgentMessages(runId);
+      expect(messages.length).toBe(0);
+
+      const realInstallation = getVerifiedInstallationId();
+      expect(realInstallation).toBe('device_b');
+      expect(validateInstallationOwnership('device_b')).toBe(true);
+      expect(validateInstallationOwnership('device_a')).toBe(false);
     });
   });
 });

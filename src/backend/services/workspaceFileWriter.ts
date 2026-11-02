@@ -2,7 +2,8 @@
  * SUSI AI — Restricted Workspace File Writer for LEX
  *
  * Enforces strict workspace boundary constraints, realpath & symlink traversal protection,
- * explicit cryptographically bound approval gates for existing files, and immediate read-back verification.
+ * mandatory user-identity-bound approval gates for existing files, atomic staging writes,
+ * and immediate read-back verification.
  */
 
 import path from 'path';
@@ -21,12 +22,13 @@ export interface FileWriteResult {
 
 export interface TrustedOverwriteApproval {
   approvalId: string;
-  userId?: string | null;
-  taskId: string;
+  userId: string; // Mandatory explicit user identity
+  taskId: string; // Mandatory bound task ID
   filePath: string;
   operation: 'OVERWRITE';
   issuedAt: number;
   expiresAt: number;
+  confirmationToken: string;
 }
 
 export interface WorkspaceWriteOptions {
@@ -61,27 +63,45 @@ export class WorkspaceFileWriter {
   }
 
   /**
-   * Issues a cryptographically unique, time-bound approval token bound to a specific user, task, and file path.
+   * Issues an overwrite approval ONLY upon explicit, verified user confirmation.
+   * Arbitrary task context or model output cannot invoke this without explicit proof.
    */
-  public issueOverwriteApproval(params: {
+  public issueExplicitUserConfirmationApproval(params: {
     taskId: string;
     filePath: string;
-    userId?: string | null;
+    userId: string;
+    explicitUserConfirmed: boolean;
     ttlMs?: number;
   }): TrustedOverwriteApproval {
-    const { taskId, filePath, userId = null, ttlMs = 5 * 60 * 1000 } = params;
+    const { taskId, filePath, userId, explicitUserConfirmed, ttlMs = 5 * 60 * 1000 } = params;
+
+    if (!explicitUserConfirmed) {
+      throw new Error('Security violation: Explicit user confirmation is strictly required to issue an overwrite approval.');
+    }
+    if (!userId || typeof userId !== 'string' || !userId.trim()) {
+      throw new Error('Security violation: User identity is mandatory to issue an overwrite approval.');
+    }
+    if (!taskId || typeof taskId !== 'string' || !taskId.trim()) {
+      throw new Error('Security violation: Task ID is mandatory to issue an overwrite approval.');
+    }
+    if (!filePath || typeof filePath !== 'string' || !filePath.trim()) {
+      throw new Error('Security violation: File path is mandatory to issue an overwrite approval.');
+    }
+
     const now = Date.now();
     const cleanPath = filePath.replace(/\\/g, '/').replace(/^\/+/, '');
     const approvalId = `appr_${crypto.randomBytes(16).toString('hex')}`;
+    const confirmationToken = `conf_${crypto.randomBytes(16).toString('hex')}`;
 
     const approval: TrustedOverwriteApproval = {
       approvalId,
-      userId,
-      taskId,
+      userId: userId.trim(),
+      taskId: taskId.trim(),
       filePath: cleanPath,
       operation: 'OVERWRITE',
       issuedAt: now,
       expiresAt: now + ttlMs,
+      confirmationToken,
     };
 
     this.activeApprovals.set(approvalId, approval);
@@ -89,58 +109,71 @@ export class WorkspaceFileWriter {
   }
 
   /**
-   * Validates and immediately consumes an approval token (single-use).
+   * Validates and immediately consumes an approval token (single-use nonce consumption).
+   * Rejects if recorded user identity or execution user identity is missing or mismatched.
    */
   public validateAndConsumeApproval(
     approval: TrustedOverwriteApproval,
     target: { taskId: string; cleanRelativePath: string; userId?: string | null }
   ): { valid: boolean; error?: string } {
-    if (!approval || !approval.approvalId) {
+    if (!approval || typeof approval !== 'object' || !approval.approvalId) {
       return { valid: false, error: 'Approval token is missing or malformed.' };
     }
 
-    const recorded = this.activeApprovals.get(approval.approvalId);
-    if (!recorded) {
-      return { valid: false, error: 'Approval token is invalid, unrecognized, or has already been consumed.' };
+    // 1. Mandatory Identity Check: both recorded userId and execution userId must be non-empty strings
+    if (!approval.userId || typeof approval.userId !== 'string' || !approval.userId.trim()) {
+      return { valid: false, error: 'Security violation: Approval recorded user identity is missing or empty.' };
     }
-
-    // Single-use: remove immediately to prevent reuse
-    this.activeApprovals.delete(approval.approvalId);
-
-    // Verify expiration
-    if (Date.now() > recorded.expiresAt) {
-      return { valid: false, error: 'Approval token has expired.' };
+    if (!target.userId || typeof target.userId !== 'string' || !target.userId.trim()) {
+      return { valid: false, error: 'Security violation: Execution user identity is missing or empty.' };
     }
-
-    // Verify task binding
-    if (recorded.taskId !== target.taskId) {
+    if (approval.userId.trim() !== target.userId.trim()) {
       return {
         valid: false,
-        error: `Approval token task mismatch: expected "${recorded.taskId}", got "${target.taskId}".`,
+        error: `Security violation: Approval token user mismatch. Approved by "${approval.userId}", executed by "${target.userId}".`,
       };
     }
 
-    // Verify file path binding (normalized)
+    // 2. Lookup in active unconsumed approvals (prevents forgery and replay)
+    const recorded = this.activeApprovals.get(approval.approvalId);
+    if (!recorded) {
+      return { valid: false, error: 'Security violation: Approval token is invalid, unrecognized, or has already been consumed.' };
+    }
+
+    // Single-use: remove immediately
+    this.activeApprovals.delete(approval.approvalId);
+
+    // 3. Expiration check
+    if (Date.now() > recorded.expiresAt) {
+      return { valid: false, error: 'Security violation: Approval token has expired.' };
+    }
+
+    // 4. Exact task ID check
+    if (!target.taskId || recorded.taskId !== target.taskId.trim()) {
+      return {
+        valid: false,
+        error: `Security violation: Approval token task mismatch. Expected "${recorded.taskId}", got "${target.taskId}".`,
+      };
+    }
+
+    // 5. Normalized path check
     const normalizedRecordedPath = recorded.filePath.toLowerCase().replace(/\\/g, '/').replace(/^\/+/, '');
     const normalizedTargetPath = target.cleanRelativePath.toLowerCase().replace(/\\/g, '/').replace(/^\/+/, '');
     if (normalizedRecordedPath !== normalizedTargetPath) {
       return {
         valid: false,
-        error: `Approval token path mismatch: approved for "${recorded.filePath}", requested for "${target.cleanRelativePath}".`,
+        error: `Security violation: Approval token path mismatch. Approved for "${recorded.filePath}", requested for "${target.cleanRelativePath}".`,
       };
     }
 
-    // Verify user binding if specified in approval
-    if (recorded.userId && target.userId && recorded.userId !== target.userId) {
-      return {
-        valid: false,
-        error: `Approval token user mismatch: approved by "${recorded.userId}", executed by "${target.userId}".`,
-      };
-    }
-
-    // Verify operation
+    // 6. Operation check
     if (recorded.operation !== 'OVERWRITE') {
-      return { valid: false, error: 'Approval token is not valid for OVERWRITE operations.' };
+      return { valid: false, error: 'Security violation: Approval token operation is not OVERWRITE.' };
+    }
+
+    // 7. Verify confirmation token proof
+    if (!recorded.confirmationToken || recorded.confirmationToken !== approval.confirmationToken) {
+      return { valid: false, error: 'Security violation: Forged or invalid confirmation token proof.' };
     }
 
     return { valid: true };
@@ -148,7 +181,7 @@ export class WorkspaceFileWriter {
 
   /**
    * Validates that target path stays strictly inside workspace boundary, checking both lexical and real filesystem paths,
-   * rejecting symlink traversal escapes and forbidden files.
+   * rejecting symlinks on directories and files, and forbidding sensitive files.
    */
   public resolveAndValidatePath(
     relativePath: string,
@@ -191,34 +224,41 @@ export class WorkspaceFileWriter {
       cleanRelativePath = path.relative(canonicalRoot, resolvedPath);
     }
 
-    // 2. Realpath & Symlink Protection:
-    // If the file itself exists, check whether it is a symlink or points outside canonical root
-    if (fs.existsSync(resolvedPath)) {
+    // 2. Symlink Protection on Target File (Fail Closed)
+    try {
+      const lstat = fs.lstatSync(resolvedPath);
+      if (lstat.isSymbolicLink()) {
+        throw new Error(
+          `Security violation: Target file "${relativePath}" is a symbolic link. Operations through symlinks are strictly prohibited.`
+        );
+      }
       const realTarget = fs.realpathSync(resolvedPath);
       if (!realTarget.startsWith(canonicalRootWithSep) && realTarget !== canonicalRoot) {
         throw new Error(
-          `Security violation: Symlink "${relativePath}" points outside authorized workspace root ("${realTarget}").`
+          `Security violation: Target path "${relativePath}" resolves outside authorized workspace root ("${realTarget}").`
         );
       }
-      const lstat = fs.lstatSync(resolvedPath);
-      if (lstat.isSymbolicLink()) {
-        const linkTarget = fs.realpathSync(resolvedPath);
-        if (!linkTarget.startsWith(canonicalRootWithSep) && linkTarget !== canonicalRoot) {
-          throw new Error(
-            `Security violation: Symbolic link "${relativePath}" escapes workspace boundary to "${linkTarget}".`
-          );
-        }
+    } catch (err: unknown) {
+      const nodeErr = err as { code?: string; message?: string };
+      if (nodeErr.code !== 'ENOENT') {
+        throw err;
       }
     }
 
-    // 3. Check ancestor path components for symlink directory escapes
+    // 3. Step-by-step Directory Path Verification (Fail Closed on directory symlinks)
     let ancestor = path.dirname(resolvedPath);
     while (ancestor && ancestor !== canonicalRoot && ancestor !== path.dirname(ancestor)) {
       if (fs.existsSync(ancestor)) {
+        const stat = fs.lstatSync(ancestor);
+        if (stat.isSymbolicLink()) {
+          throw new Error(
+            `Security violation: Directory component "${ancestor}" is a symbolic link. Directory symlinks inside workspace are strictly prohibited.`
+          );
+        }
         const realAncestor = fs.realpathSync(ancestor);
         if (!realAncestor.startsWith(canonicalRootWithSep) && realAncestor !== canonicalRoot) {
           throw new Error(
-            `Security violation: Ancestor path "${ancestor}" is a symlink resolving to "${realAncestor}" outside authorized workspace root.`
+            `Security violation: Ancestor path "${ancestor}" resolves to "${realAncestor}" outside authorized workspace root.`
           );
         }
       }
@@ -246,8 +286,8 @@ export class WorkspaceFileWriter {
   }
 
   /**
-   * Safely writes a file to the workspace with symlink protection, explicit trusted approval for overwrites,
-   * and read-back verification.
+   * Safely writes a file to the workspace with atomic staging, symlink rejection,
+   * mandatory user-identity-bound overwrite approvals, and read-back verification.
    */
   public async writeFile(
     relativePath: string,
@@ -275,9 +315,38 @@ export class WorkspaceFileWriter {
       };
     }
 
-    const fileExists = fs.existsSync(resolvedPath);
+    // Check if target file exists and ensure it is not a symlink
+    let fileExists = false;
+    try {
+      const lstat = fs.lstatSync(resolvedPath);
+      fileExists = true;
+      if (lstat.isSymbolicLink()) {
+        return {
+          path: resolvedPath,
+          relativePath: cleanRelativePath,
+          success: false,
+          verified: false,
+          bytesWritten: 0,
+          operation: 'rejected',
+          error: `Security violation: Target file "${cleanRelativePath}" is a symbolic link. Writing through symlinks is strictly prohibited.`,
+        };
+      }
+    } catch (err: unknown) {
+      const nodeErr = err as { code?: string };
+      if (nodeErr.code !== 'ENOENT') {
+        return {
+          path: resolvedPath,
+          relativePath: cleanRelativePath,
+          success: false,
+          verified: false,
+          bytesWritten: 0,
+          operation: 'failed',
+          error: `Filesystem access error: ${String(err)}`,
+        };
+      }
+    }
 
-    // If file exists, require explicit trusted approval bound to task and file
+    // If file exists, require explicit trusted approval bound to user, task, and file
     if (fileExists) {
       if (!options.trustedApproval) {
         return {
@@ -310,32 +379,70 @@ export class WorkspaceFileWriter {
       }
     }
 
+    const parentDir = path.dirname(resolvedPath);
+    let stagingPath: string | null = null;
+
     try {
-      // Ensure parent directory exists
-      const parentDir = path.dirname(resolvedPath);
-      await fs.promises.mkdir(parentDir, { recursive: true });
-
-      // Write content
-      await fs.promises.writeFile(resolvedPath, content, 'utf8');
-
-      // Post-Write Realpath Verification (guards against symlink races during write)
+      // Step-by-step directory creation with symlink validation
       const canonicalRoot = fs.realpathSync(workspaceRoot);
       const canonicalRootWithSep = canonicalRoot.endsWith(path.sep) ? canonicalRoot : `${canonicalRoot}${path.sep}`;
-      const realWritten = fs.realpathSync(resolvedPath);
-      if (!realWritten.startsWith(canonicalRootWithSep) && realWritten !== canonicalRoot) {
-        // Attempt immediate cleanup of escaped write
-        try {
-          await fs.promises.unlink(resolvedPath);
-        } catch {}
-        return {
-          path: resolvedPath,
-          relativePath: cleanRelativePath,
-          success: false,
-          verified: false,
-          bytesWritten: 0,
-          operation: 'failed',
-          error: `Security violation: Post-write realpath "${realWritten}" is outside authorized workspace root.`,
-        };
+      const relDir = path.relative(canonicalRoot, parentDir);
+
+      if (relDir && relDir !== '.') {
+        const segments = relDir.split(/[\\/]/);
+        let curr = canonicalRoot;
+        for (const seg of segments) {
+          curr = path.join(curr, seg);
+          if (fs.existsSync(curr)) {
+            const stat = fs.lstatSync(curr);
+            if (stat.isSymbolicLink()) {
+              throw new Error(`Security violation: Directory "${curr}" is a symbolic link.`);
+            }
+          } else {
+            fs.mkdirSync(curr);
+            const stat = fs.lstatSync(curr);
+            if (stat.isSymbolicLink()) {
+              throw new Error(`Security violation: Created directory "${curr}" is a symbolic link.`);
+            }
+          }
+        }
+      }
+
+      // Atomic Staging Write:
+      // Create a unique temporary staging file in the parent directory using 'wx' (O_CREAT | O_EXCL)
+      // This prevents pre-planted symlink hijacking.
+      stagingPath = path.join(
+        parentDir,
+        `.__susi_staging_${Date.now()}_${crypto.randomBytes(8).toString('hex')}.tmp`
+      );
+
+      const fileHandle = await fs.promises.open(stagingPath, 'wx');
+      try {
+        await fileHandle.writeFile(content, 'utf8');
+        await fileHandle.sync(); // Flush data to disk
+      } finally {
+        await fileHandle.close();
+      }
+
+      // Verify staging file is a regular file before atomic replace
+      const stagingStat = fs.lstatSync(stagingPath);
+      if (stagingStat.isSymbolicLink()) {
+        throw new Error('Security violation: Staging file is a symbolic link.');
+      }
+
+      // Atomic Rename:
+      // Replaces the destination directory entry without following symlinks
+      await fs.promises.rename(stagingPath, resolvedPath);
+      stagingPath = null; // Successfully moved
+
+      // Verify replaced file
+      const finalStat = fs.lstatSync(resolvedPath);
+      if (finalStat.isSymbolicLink()) {
+        throw new Error('Security violation: Replaced target is a symbolic link.');
+      }
+      const realFinal = fs.realpathSync(resolvedPath);
+      if (!realFinal.startsWith(canonicalRootWithSep) && realFinal !== canonicalRoot) {
+        throw new Error(`Security violation: Replaced file resolves outside authorized root: "${realFinal}".`);
       }
 
       // Immediate Read-Back Verification
@@ -363,6 +470,11 @@ export class WorkspaceFileWriter {
         operation: fileExists ? 'modified' : 'created',
       };
     } catch (err: unknown) {
+      if (stagingPath && fs.existsSync(stagingPath)) {
+        try {
+          await fs.promises.unlink(stagingPath);
+        } catch {}
+      }
       return {
         path: resolvedPath,
         relativePath: cleanRelativePath,

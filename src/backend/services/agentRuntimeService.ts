@@ -162,7 +162,7 @@ async function getAuthenticatedContext() {
 /**
  * Creates an agent run. Persists to Supabase if authenticated, or keeps strictly local to this installation if anonymous.
  */
-export async function createAgentRun(taskId: string, plan: Json = []): Promise<string> {
+export async function createAgentRun(taskId: string, plan: Json = [], ownerId?: string | null): Promise<string> {
   const runId = `run_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const now = new Date().toISOString();
   const currentInstallation = getVerifiedInstallationId();
@@ -170,7 +170,7 @@ export async function createAgentRun(taskId: string, plan: Json = []): Promise<s
   const newRun: IsolatedAgentRun = {
     id: runId,
     task_id: taskId,
-    user_id: null,
+    user_id: ownerId || null,
     manager_agent: 'SUSI',
     status: 'queued',
     plan,

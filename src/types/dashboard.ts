@@ -48,6 +48,7 @@ export interface TaskItem {
   priority: 'High' | 'Critical' | 'Medium' | 'Low';
   category: string;
   completed?: boolean;
+  userId?: string | null;
 }
 
 export interface NewsItem {

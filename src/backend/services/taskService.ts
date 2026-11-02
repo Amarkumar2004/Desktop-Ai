@@ -90,6 +90,7 @@ export async function getTasks(filter?: TaskFilterOptions): Promise<TaskItem[]> 
                 : 'Medium',
             category: typeof t.category === 'string' ? t.category : 'Operations',
             completed: Boolean(t.completed) || prog >= 100 || t.status === 'completed',
+            userId: typeof t.user_id === 'string' ? t.user_id : null,
           };
         });
         saveStoredTasks(mapped);
@@ -98,7 +99,11 @@ export async function getTasks(filter?: TaskFilterOptions): Promise<TaskItem[]> 
     }
   }
 
-  return getStoredTasks();
+  const stored = getStoredTasks();
+  if (filter?.userId) {
+    return stored.filter((t) => t.userId === filter.userId);
+  }
+  return stored;
 }
 
 /**
@@ -108,7 +113,7 @@ export async function createTask(
   data: Omit<TaskItem, 'id' | 'progress'> & {
     id?: string;
     progress?: number;
-    userId?: string;
+    userId?: string | null;
     workspaceId?: string;
     description?: string;
   }
@@ -125,6 +130,7 @@ export async function createTask(
     category: data.category || 'Operations',
     progress,
     completed: isCompleted,
+    userId: data.userId || null,
   };
 
   // Real Supabase persistence

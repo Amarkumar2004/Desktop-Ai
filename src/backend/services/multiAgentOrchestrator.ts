@@ -42,6 +42,7 @@ export interface MultiAgentPipelineInput {
   taskId: string;
   title: string;
   objective: string;
+  userId?: string | null;
   context?: Record<string, unknown>;
   signal?: AbortSignal;
   onProgress?: (step: MultiAgentStepRecord, message?: AgentMessage) => void;
@@ -119,7 +120,7 @@ export class MultiAgentOrchestrator {
    * Executes the complete 5-stage multi-agent pipeline.
    */
   async executePipeline(input: MultiAgentPipelineInput): Promise<MultiAgentPipelineResult> {
-    const { taskId, title, objective, context = {}, signal, onProgress } = input;
+    const { taskId, title, objective, userId = null, context = {}, signal, onProgress } = input;
     const steps: MultiAgentStepRecord[] = [];
     let currentStepId: string | null = null;
 
@@ -135,14 +136,18 @@ export class MultiAgentOrchestrator {
       throw new Error('Pipeline cancelled before execution started.');
     }
 
-    // 1. Initialize Agent Run
-    const runId = await createAgentRun(taskId, [
-      { step: 1, agent: 'SUSI', role: 'Task Decomposition & Planning' },
-      { step: 2, agent: 'SPY', role: 'Deep Research & Technical Intelligence' },
-      { step: 3, agent: 'EURO', role: 'Analytical Synthesis & Risk Blueprint' },
-      { step: 4, agent: 'LEX', role: 'Implementation Deliverables & Execution' },
-      { step: 5, agent: 'SUSI', role: 'Structured Verification & Audit' },
-    ]);
+    // 1. Initialize Agent Run with owner identity
+    const runId = await createAgentRun(
+      taskId,
+      [
+        { step: 1, agent: 'SUSI', role: 'Task Decomposition & Planning' },
+        { step: 2, agent: 'SPY', role: 'Deep Research & Technical Intelligence' },
+        { step: 3, agent: 'EURO', role: 'Analytical Synthesis & Risk Blueprint' },
+        { step: 4, agent: 'LEX', role: 'Implementation Deliverables & Execution' },
+        { step: 5, agent: 'SUSI', role: 'Structured Verification & Audit' },
+      ],
+      userId
+    );
 
     await updateAgentRun(runId, { status: 'planning' });
     await updateTask(taskId, { progress: 5, status: 'in_progress', completed: false });
@@ -549,6 +554,7 @@ Provide:
         for (const art of artifacts) {
           const writeRes = await workspaceFileWriter.writeFile(art.filename, art.content, {
             taskId,
+            userId: userId || undefined,
             trustedApproval: context.trustedApproval as TrustedOverwriteApproval | undefined,
           });
           fileResults.push(writeRes);
