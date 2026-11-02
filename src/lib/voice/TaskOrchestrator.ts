@@ -206,7 +206,7 @@ export class TaskOrchestrator {
     if (!task) return;
     if (task.status === 'cancelled') return;
 
-    if (task.retryCount < task.maxRetries && task.status !== 'cancelled') {
+    if (task.retryCount < task.maxRetries) {
       task.retryCount += 1;
       const backoffMs = Math.min(1000 * Math.pow(2, task.retryCount), 4000);
       console.warn(`[TaskOrchestrator] Retrying task ${taskId} (attempt ${task.retryCount}/${task.maxRetries}) in ${backoffMs}ms...`);
