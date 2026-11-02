@@ -124,6 +124,7 @@ export default function AgentAvatar({
             <path d="M18 41L24 38L30 41" stroke="#F59E0B" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         );
+      case 'euro':
       case 'yoru':
         return (
           <svg viewBox="0 0 48 48" className="w-full h-full rounded-lg" fill="none" xmlns="http://www.w3.org/2000/svg">

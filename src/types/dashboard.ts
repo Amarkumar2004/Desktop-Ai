@@ -1,4 +1,4 @@
-export type AgentId = 'lex' | 'susi' | 'spy' | 'euro';
+export type AgentId = 'lex' | 'susi' | 'spy' | 'euro' | 'yoru';
 export type AgentStatus = 'Online' | 'Busy' | 'Idle' | 'Offline';
 export type TaskPriority = 'Low' | 'Medium' | 'High' | 'Critical' | 'Routine';
 export type TaskStatus = 'Active' | 'Scheduled' | 'Completed';
@@ -43,7 +43,7 @@ export interface Task {
 export interface TaskItem {
   id: string;
   title: string;
-  assignedAgent: 'LEX' | 'SUSI' | 'SPY' | 'EURO';
+  assignedAgent: 'LEX' | 'SUSI' | 'SPY' | 'EURO' | 'YORU';
   progress: number;
   priority: 'High' | 'Critical' | 'Medium' | 'Low';
   category: string;

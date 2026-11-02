@@ -74,7 +74,7 @@ export interface VoiceResponseSegment {
 
 export interface VoiceProcessResult {
   replyText: string;
-  assignedAgent: 'LEX' | 'SUSI' | 'SPY' | 'EURO';
+  assignedAgent: 'LEX' | 'SUSI' | 'SPY' | 'EURO' | 'YORU';
   modeUsed: 'online' | 'offline';
   sourceProvider?: 'cloud_api' | 'ollama' | 'gemini' | 'local_smart';
   modelName?: string;

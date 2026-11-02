@@ -104,6 +104,24 @@ const AGENT_SUB_ACTIVITIES: Record<
     ],
     hardware: { cpu: 22, memory: '2.9 / 8.0 GB', temp: '20.1°C', throughput: '850 MB/s' },
   },
+  yoru: {
+    stepTitle: 'Research Analysis & Insight Synthesis',
+    stepIndex: 1,
+    totalSteps: 4,
+    steps: [
+      { text: 'Review research inputs and source quality', done: true },
+      { text: 'Analyze findings and identify patterns', done: false, inProgress: true },
+      { text: 'Cross-check evidence and validate conclusions', done: false },
+      { text: 'Publish structured analysis report', done: false },
+    ],
+    liveLogs: [
+      { time: '11:58:05', text: '> analysis_pipeline::initialize(mode="evidence-review")', type: 'cmd' },
+      { time: '11:58:09', text: '> Research inputs indexed for analysis', type: 'info' },
+      { time: '11:58:15', text: '> Evidence validation stage ready', type: 'success' },
+      { time: '11:58:21', text: '> Awaiting analysis tasks from the shared queue', type: 'info' },
+    ],
+    hardware: { cpu: 14, memory: '4.1 / 8.0 GB', temp: '21.0°C', throughput: '420 MB/s' },
+  },
   euro: {
     stepTitle: 'Research Analysis & Insight Synthesis',
     stepIndex: 1,
@@ -129,6 +147,7 @@ const AGENT_SKILLS: Record<AgentId, string[]> = {
   susi: ['Swarm Orchestration', 'Multi-Region Sharding', 'Kafka Event Pipelines', 'Task Load Balancing', 'Neural Fine-Tuning'],
   spy: ['Zero-Trust Defense', 'OWASP Penetration Guard', 'TLS 1.3 Cryptography', 'Anomaly Detection', 'Firewall Inspection'],
   euro: ['Data Analysis', 'Pattern Detection', 'Research Synthesis', 'Insight Reporting', 'Decision Support'],
+  yoru: ['Data Analysis', 'Pattern Detection', 'Research Synthesis', 'Insight Reporting', 'Decision Support'],
 };
 
 export default function WorkforceAgentsView({
@@ -148,6 +167,7 @@ export default function WorkforceAgentsView({
     susi: 'activity',
     spy: 'activity',
     euro: 'activity',
+    yoru: 'activity',
   });
 
   // Filtered agents

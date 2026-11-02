@@ -323,7 +323,7 @@ function DashboardContent() {
 
   // New Task Form State
   const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskAgent, setNewTaskAgent] = useState<'LEX' | 'SUSI' | 'SPY' | 'YORU'>('LEX');
+  const [newTaskAgent, setNewTaskAgent] = useState<'LEX' | 'SUSI' | 'SPY' | 'EURO' | 'YORU'>('LEX');
   const [newTaskPriority, setNewTaskPriority] = useState<'High' | 'Critical' | 'Medium' | 'Low'>('High');
 
   // News Feed Logs State

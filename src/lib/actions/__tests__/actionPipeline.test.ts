@@ -21,8 +21,8 @@ describe('ActionPipeline — Duplicate Execution Protection & Lifecycle', () => 
 
   it('deduplicates identical actions triggered within the deduplication window', async () => {
     const req1: PipelineActionRequest = {
-      type: 'VOLUME_CONTROL',
-      payload: { action: 'up' },
+      type: 'NAVIGATE_TAB',
+      payload: { tab: 'analysis' },
       source: 'voice',
     };
 
