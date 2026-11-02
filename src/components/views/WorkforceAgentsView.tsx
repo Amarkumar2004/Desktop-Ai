@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Activity,
   ArrowRight,
@@ -169,6 +169,53 @@ export default function WorkforceAgentsView({
     euro: 'activity',
     yoru: 'activity',
   });
+
+  const [realAgentLogs, setRealAgentLogs] = useState<Record<string, Array<{ time: string; text: string; from: string; to: string; type: string }>>>({});
+
+  useEffect(() => {
+    const handleMsg = (e: Event) => {
+      const custom = e as CustomEvent<{
+        runId: string;
+        message: {
+          from_agent?: string;
+          fromAgent?: string;
+          to_agent?: string;
+          toAgent?: string;
+          content: string;
+          type?: string;
+          created_at?: string;
+        };
+      }>;
+      const msg = custom.detail?.message;
+      if (!msg) return;
+      const fromKey = String(msg.from_agent || msg.fromAgent || '').toLowerCase();
+      const toKey = String(msg.to_agent || msg.toAgent || '').toLowerCase();
+      const time = new Date(msg.created_at || Date.now()).toLocaleTimeString();
+      const entry = {
+        time,
+        text: `[${msg.from_agent || msg.fromAgent} → ${msg.to_agent || msg.toAgent}] ${msg.content}`,
+        from: String(msg.from_agent || msg.fromAgent || 'UNKNOWN'),
+        to: String(msg.to_agent || msg.toAgent || 'ALL'),
+        type: msg.type || 'info',
+      };
+
+      setRealAgentLogs((prev) => {
+        const next = { ...prev };
+        if (fromKey) {
+          next[fromKey] = [entry, ...(next[fromKey] || []).slice(0, 19)];
+        }
+        if (toKey && toKey !== fromKey && toKey !== 'all') {
+          next[toKey] = [entry, ...(next[toKey] || []).slice(0, 19)];
+        }
+        return next;
+      });
+    };
+
+    window.addEventListener('susi-agent-message-added', handleMsg);
+    return () => {
+      window.removeEventListener('susi-agent-message-added', handleMsg);
+    };
+  }, []);
 
   // Filtered agents
   const filteredAgents = agents.filter((agent) => {
@@ -460,9 +507,14 @@ export default function WorkforceAgentsView({
                           <Zap className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
                           <span>CURRENT ACTIVE TASK</span>
                         </div>
-                        <span className="text-[10px] font-mono font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded">
-                          Step {sub.stepIndex} of {sub.totalSteps}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[9px] font-mono font-semibold bg-stone-100 text-stone-600 px-1.5 py-0.5 rounded border border-stone-200">
+                            BASELINE PROFILE
+                          </span>
+                          <span className="text-[10px] font-mono font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded">
+                            Step {sub.stepIndex} of {sub.totalSteps}
+                          </span>
+                        </div>
                       </div>
 
                       <div className="text-sm font-black text-stone-900 leading-snug">
@@ -616,40 +668,68 @@ export default function WorkforceAgentsView({
                 {/* ── TAB 3: LIVE TERMINAL EXECUTION LOGS ── */}
                 {activeTab === 'logs' && (
                   <div className="space-y-2 animate-in fade-in duration-150">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-stone-800 uppercase tracking-wider flex items-center gap-1.5">
-                        <Terminal className="w-3.5 h-3.5 text-stone-600" />
-                        Live Node Execution Stream
-                      </span>
-                      <span className="text-[10px] font-mono text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                        STREAMING 4/4
-                      </span>
-                    </div>
+                    {(() => {
+                      const agentRealLogs = realAgentLogs[agent.id.toLowerCase()] || [];
+                      const hasRealLogs = agentRealLogs.length > 0;
+                      return (
+                        <>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-bold text-stone-800 uppercase tracking-wider flex items-center gap-1.5">
+                              <Terminal className="w-3.5 h-3.5 text-stone-600" />
+                              {hasRealLogs ? 'Live Swarm Inter-Agent Stream' : 'Node Execution Stream'}
+                            </span>
+                            {hasRealLogs ? (
+                              <span className="text-[10px] font-mono text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-300 animate-pulse">
+                                REAL AGENT RUN ACTIVE
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-mono text-stone-500 font-semibold bg-stone-100 px-2 py-0.5 rounded border border-stone-200">
+                                BASELINE PROFILE LOGS
+                              </span>
+                            )}
+                          </div>
 
-                    <div className="bg-stone-900 text-stone-200 font-mono text-[11px] p-3 rounded-xl border border-stone-800 space-y-1.5 max-h-[220px] overflow-y-auto">
-                      {sub.liveLogs.map((log, lidx) => (
-                        <div key={lidx} className="flex items-start gap-2 leading-relaxed">
-                          <span className="text-stone-500 select-none">[{log.time}]</span>
-                          <span
-                            className={
-                              log.type === 'cmd'
-                                ? 'text-amber-300 font-bold'
-                                : log.type === 'success'
-                                ? 'text-emerald-400'
-                                : log.type === 'warn'
-                                ? 'text-rose-400'
-                                : 'text-stone-300'
-                            }
-                          >
-                            {log.text}
-                          </span>
-                        </div>
-                      ))}
-                      <div className="flex items-center gap-1 text-stone-500 pt-1">
-                        <span className="w-1.5 h-3 bg-amber-400 animate-pulse" />
-                        <span className="text-[10px]">Listening for incoming cluster instructions...</span>
-                      </div>
-                    </div>
+                          <div className="bg-stone-900 text-stone-200 font-mono text-[11px] p-3 rounded-xl border border-stone-800 space-y-1.5 max-h-[220px] overflow-y-auto">
+                            {!hasRealLogs && (
+                              <div className="text-[10px] text-stone-400 bg-stone-800/80 px-2.5 py-1.5 rounded mb-2 border border-stone-700/50">
+                                ℹ️ Displaying baseline profile sample logs. Real runtime messages stream here when this agent executes an autonomous task.
+                              </div>
+                            )}
+                            {hasRealLogs ? (
+                              agentRealLogs.map((log, lidx) => (
+                                <div key={lidx} className="flex items-start gap-2 leading-relaxed">
+                                  <span className="text-stone-500 select-none">[{log.time}]</span>
+                                  <span className="text-amber-300 font-bold">{log.text}</span>
+                                </div>
+                              ))
+                            ) : (
+                              sub.liveLogs.map((log, lidx) => (
+                                <div key={lidx} className="flex items-start gap-2 leading-relaxed">
+                                  <span className="text-stone-500 select-none">[{log.time}]</span>
+                                  <span
+                                    className={
+                                      log.type === 'cmd'
+                                        ? 'text-amber-300 font-bold'
+                                        : log.type === 'success'
+                                        ? 'text-emerald-400'
+                                        : log.type === 'warn'
+                                        ? 'text-rose-400'
+                                        : 'text-stone-300'
+                                    }
+                                  >
+                                    {log.text}
+                                  </span>
+                                </div>
+                              ))
+                            )}
+                            <div className="flex items-center gap-1 text-stone-500 pt-1">
+                              <span className="w-1.5 h-3 bg-amber-400 animate-pulse" />
+                              <span className="text-[10px]">Listening for incoming cluster instructions...</span>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
 

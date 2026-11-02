@@ -25,7 +25,9 @@ import {
   Zap,
 } from 'lucide-react';
 import AgentAvatar from '@/components/common/AgentAvatar';
-import { Agent } from '@/types/dashboard';
+import MultiAgentSwarmModal from '@/components/agents/MultiAgentSwarmModal';
+import { Sparkles } from 'lucide-react';
+import { Agent, AgentId } from '@/types/dashboard';
 import { INITIAL_AGENTS } from '@/data/initialData';
 
 export interface ExtendedTaskItem {
@@ -69,6 +71,7 @@ export default function TaskQueueView({
   const [priorityFilter, setPriorityFilter] = useState<string>('All');
   const [agentFilter, setAgentFilter] = useState<string>('All');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
+  const [selectedSwarmTask, setSelectedSwarmTask] = useState<ExtendedTaskItem | null>(null);
 
   // Compute status helpers
   const getTaskStatus = (t: ExtendedTaskItem): 'Completed' | 'Active' | 'Scheduled' => {
@@ -374,6 +377,7 @@ export default function TaskQueueView({
                     onBoostTask={onBoostTask}
                     onDeleteTask={onDeleteTask}
                     onReassignTask={onReassignTask}
+                    onOpenSwarm={setSelectedSwarmTask}
                     getAgentColorStyles={getAgentColorStyles}
                     getCategoryIcon={getCategoryIcon}
                   />
@@ -413,6 +417,7 @@ export default function TaskQueueView({
                     onBoostTask={onBoostTask}
                     onDeleteTask={onDeleteTask}
                     onReassignTask={onReassignTask}
+                    onOpenSwarm={setSelectedSwarmTask}
                     getAgentColorStyles={getAgentColorStyles}
                     getCategoryIcon={getCategoryIcon}
                   />
@@ -445,6 +450,7 @@ export default function TaskQueueView({
                     onBoostTask={onBoostTask}
                     onDeleteTask={onDeleteTask}
                     onReassignTask={onReassignTask}
+                    onOpenSwarm={setSelectedSwarmTask}
                     getAgentColorStyles={getAgentColorStyles}
                     getCategoryIcon={getCategoryIcon}
                   />
@@ -523,7 +529,7 @@ export default function TaskQueueView({
                         {/* Assigned Agent */}
                         <td className="py-3 px-3 whitespace-nowrap">
                           <div className="flex items-center gap-2">
-                            <AgentAvatar id={agentName.toLowerCase() as any} size="xs" />
+                            <AgentAvatar id={agentName.toLowerCase() as AgentId} size="xs" />
                             <span
                               className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${agentStyles.bg}`}
                             >
@@ -580,6 +586,14 @@ export default function TaskQueueView({
                         <td className="py-3 px-3 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
+                              onClick={() => setSelectedSwarmTask(task)}
+                              title="Launch Multi-Agent Swarm"
+                              className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Sparkles className="w-3 h-3" />
+                              Swarm
+                            </button>
+                            <button
                               onClick={() => onBoostTask(task.id)}
                               title="Boost Progress +15%"
                               className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-[10px] font-bold border border-amber-200 transition-colors"
@@ -604,6 +618,16 @@ export default function TaskQueueView({
           </div>
         </div>
       )}
+
+      {/* Multi-Agent Autonomous Swarm Execution Modal */}
+      <MultiAgentSwarmModal
+        isOpen={Boolean(selectedSwarmTask)}
+        task={selectedSwarmTask}
+        onClose={() => setSelectedSwarmTask(null)}
+        onTaskUpdated={(updated) => {
+          onBoostTask(updated.id);
+        }}
+      />
 
       {/* ========================================================================= */}
       {/* 5. VIEW MODE 3: AGENT ALLOCATION MATRIX                                    */}
@@ -685,9 +709,11 @@ function TaskCardItem({
   onBoostTask,
   onDeleteTask,
   onReassignTask,
+  onOpenSwarm,
   getAgentColorStyles,
   getCategoryIcon,
 }: {
+  onOpenSwarm?: (task: ExtendedTaskItem) => void;
   task: ExtendedTaskItem;
   onCompleteTask: (id: string) => void;
   onBoostTask: (id: string) => void;
@@ -775,7 +801,7 @@ function TaskCardItem({
       {/* Footer Strip: Agent Pill, Category, Boost & Delete */}
       <div className="flex items-center justify-between gap-2 pt-2 border-t border-stone-100 text-xs">
         <div className="flex items-center gap-1.5">
-          <AgentAvatar id={agentName.toLowerCase() as any} size="xs" />
+          <AgentAvatar id={agentName.toLowerCase() as AgentId} size="xs" />
           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${agentStyles.bg}`}>
             {agentName}
           </span>
@@ -786,6 +812,14 @@ function TaskCardItem({
         </div>
 
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => onOpenSwarm?.(task)}
+            title="Launch Multi-Agent Swarm (SUSI → SPY → EURO → LEX)"
+            className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500 hover:bg-amber-600 text-white flex items-center gap-1 shadow-2xs transition-all cursor-pointer active:scale-95"
+          >
+            <Sparkles className="w-3 h-3" />
+            Swarm
+          </button>
           <button
             onClick={() => onBoostTask(task.id)}
             title="Boost progress +15%"

@@ -1,4 +1,5 @@
 import type { TaskItem } from '@/types/dashboard';
+import type { Task, TaskStep, Json } from '@/backend/types/database';
 import { INITIAL_TASKS } from '@/data/initialData';
 import { createClient, isSupabaseConfigured } from '@/backend/supabase/client';
 
@@ -72,22 +73,25 @@ export async function getTasks(filter?: TaskFilterOptions): Promise<TaskItem[]> 
       }
 
       if (data) {
-        const mapped: TaskItem[] = data.map((t: any) => ({
-          id: t.id,
-          title: t.title,
-          assignedAgent: (t.assigned_agent as any) || 'SUSI',
-          progress: t.progress ?? 0,
-          priority:
-            t.priority === 'urgent' || t.priority === 'Critical' || t.priority === 'critical'
-              ? 'Critical'
-              : t.priority === 'high' || t.priority === 'High'
-              ? 'High'
-              : t.priority === 'low' || t.priority === 'Low'
-              ? 'Low'
-              : 'Medium',
-          category: t.category || 'Operations',
-          completed: Boolean(t.completed) || (t.progress ?? 0) >= 100 || t.status === 'completed',
-        }));
+        const mapped: TaskItem[] = data.map((t: Record<string, unknown>) => {
+          const prog = typeof t.progress === 'number' ? t.progress : 0;
+          return {
+            id: String(t.id),
+            title: String(t.title || ''),
+            assignedAgent: (t.assigned_agent as 'LEX' | 'SUSI' | 'SPY' | 'EURO') || 'SUSI',
+            progress: prog,
+            priority:
+              t.priority === 'urgent' || t.priority === 'Critical' || t.priority === 'critical'
+                ? 'Critical'
+                : t.priority === 'high' || t.priority === 'High'
+                ? 'High'
+                : t.priority === 'low' || t.priority === 'Low'
+                ? 'Low'
+                : 'Medium',
+            category: typeof t.category === 'string' ? t.category : 'Operations',
+            completed: Boolean(t.completed) || prog >= 100 || t.status === 'completed',
+          };
+        });
         saveStoredTasks(mapped);
         return mapped;
       }
@@ -193,7 +197,7 @@ export async function updateTask(
   if (isSupabaseConfigured()) {
     const supabase = createClient();
     if (supabase) {
-      const dbPatch: any = {};
+      const dbPatch: Partial<Task> = {};
       if (patch.title !== undefined) dbPatch.title = patch.title;
       if (patch.assignedAgent !== undefined) dbPatch.assigned_agent = patch.assignedAgent;
       if (patch.priority !== undefined) dbPatch.priority = patch.priority;
@@ -209,7 +213,7 @@ export async function updateTask(
         dbPatch.completed = patch.completed;
       }
       if (patch.status !== undefined) {
-        dbPatch.status = patch.status;
+        dbPatch.status = patch.status as Task['status'];
       } else if (patch.completed === true || (patch.progress !== undefined && patch.progress >= 100)) {
         dbPatch.status = 'completed';
         dbPatch.completed_at = new Date().toISOString();
@@ -272,4 +276,120 @@ export async function deleteTask(taskId: string): Promise<boolean> {
     saveStoredTasks(filtered);
   }
   return existed;
+}
+
+// ------------------------------------------------------------------------------
+// Task Steps (Subtask / Multi-Agent Step Tracking)
+// ------------------------------------------------------------------------------
+const memoryTaskSteps = new Map<string, TaskStep[]>();
+
+export async function getTaskSteps(taskId: string): Promise<TaskStep[]> {
+  if (isSupabaseConfigured()) {
+    const supabase = createClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('task_steps')
+          .select('*')
+          .eq('task_id', taskId)
+          .order('step_index', { ascending: true });
+        if (!error && data) {
+          memoryTaskSteps.set(taskId, data);
+          return data;
+        }
+      } catch {}
+    }
+  }
+  return memoryTaskSteps.get(taskId) || [];
+}
+
+export interface CreateTaskStepInput {
+  id?: string;
+  task_id: string;
+  step_index: number;
+  action_type: string;
+  title?: string | null;
+  payload?: Json;
+  status?: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  result?: Json | null;
+  error?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+export async function createTaskStep(
+  data: CreateTaskStepInput
+): Promise<TaskStep> {
+  const stepId = data.id || `step_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const newStep: TaskStep = {
+    id: stepId,
+    task_id: data.task_id,
+    step_index: data.step_index,
+    action_type: data.action_type,
+    title: data.title ?? null,
+    payload: data.payload ?? {},
+    status: data.status || 'pending',
+    result: data.result ?? null,
+    error: data.error ?? null,
+    started_at: data.started_at ?? null,
+    completed_at: data.completed_at ?? null,
+  };
+
+  if (isSupabaseConfigured()) {
+    const supabase = createClient();
+    if (supabase) {
+      try {
+        await supabase.from('task_steps').insert(newStep);
+      } catch {}
+    }
+  }
+
+  const existing = memoryTaskSteps.get(data.task_id) || [];
+  existing.push(newStep);
+  memoryTaskSteps.set(data.task_id, existing);
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('susi-task-step-updated', { detail: { step: newStep } }));
+  }
+
+  return newStep;
+}
+
+export async function updateTaskStep(
+  stepId: string,
+  patch: Partial<TaskStep>
+): Promise<TaskStep | null> {
+  let foundStep: TaskStep | null = null;
+
+  for (const [, steps] of memoryTaskSteps.entries()) {
+    const idx = steps.findIndex((s) => s.id === stepId);
+    if (idx !== -1) {
+      steps[idx] = { ...steps[idx], ...patch };
+      foundStep = steps[idx];
+      break;
+    }
+  }
+
+  if (isSupabaseConfigured()) {
+    const supabase = createClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('task_steps')
+          .update(patch)
+          .eq('id', stepId)
+          .select()
+          .single();
+        if (!error && data) {
+          foundStep = data;
+        }
+      } catch {}
+    }
+  }
+
+  if (foundStep && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('susi-task-step-updated', { detail: { step: foundStep } }));
+  }
+
+  return foundStep;
 }

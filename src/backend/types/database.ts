@@ -163,9 +163,9 @@ export type AgentEvent = {
   created_at: string;
 };
 
-export type AgentRun = { id: string; task_id: string; user_id: string; manager_agent: 'SUSI'; status: 'queued' | 'planning' | 'running' | 'completed' | 'failed' | 'cancelled'; plan: Json; created_at: string; updated_at: string; completed_at: string | null; };
-export type AgentMessage = { id: string; run_id: string; task_id: string; user_id: string; from_agent: 'SUSI' | 'SPY' | 'EURO' | 'LEX'; to_agent: 'SUSI' | 'SPY' | 'EURO' | 'LEX' | 'ALL' | null; message_type: 'assignment' | 'status' | 'result' | 'handoff' | 'error' | 'note'; content: string; metadata: Json; created_at: string; };
-export type AgentMemory = { id: string; user_id: string; agent_id: 'SUSI' | 'SPY' | 'EURO' | 'LEX'; memory_key: string; content: Json; created_at: string; updated_at: string; };
+export type AgentRun = { id: string; task_id: string; user_id: string | null; manager_agent: 'SUSI'; status: 'queued' | 'planning' | 'running' | 'completed' | 'failed' | 'cancelled'; plan: Json; created_at: string; updated_at: string; completed_at: string | null; };
+export type AgentMessage = { id: string; run_id: string; task_id: string; user_id: string | null; from_agent: 'SUSI' | 'SPY' | 'EURO' | 'LEX'; to_agent: 'SUSI' | 'SPY' | 'EURO' | 'LEX' | 'ALL' | null; message_type: 'assignment' | 'status' | 'result' | 'handoff' | 'error' | 'note'; content: string; metadata: Json; created_at: string; };
+export type AgentMemory = { id: string; user_id: string | null; agent_id: 'SUSI' | 'SPY' | 'EURO' | 'LEX'; memory_key: string; content: Json; created_at: string; updated_at: string; };
 export type Database = {
   public: {
     Tables: {
@@ -241,9 +241,9 @@ export type Database = {
         Update: Partial<Agent>;
         Relationships: [];
       };
-      agent_runs: { Row: AgentRun; Insert: Partial<AgentRun> & { task_id: string; user_id: string }; Update: Partial<AgentRun>; Relationships: []; };
-      agent_messages: { Row: AgentMessage; Insert: Partial<AgentMessage> & { run_id: string; task_id: string; user_id: string; from_agent: AgentMessage['from_agent']; message_type: AgentMessage['message_type']; content: string }; Update: Partial<AgentMessage>; Relationships: []; };
-      agent_memory: { Row: AgentMemory; Insert: Partial<AgentMemory> & { user_id: string; agent_id: AgentMemory['agent_id']; memory_key: string; content: Json }; Update: Partial<AgentMemory>; Relationships: []; };
+      agent_runs: { Row: AgentRun; Insert: Partial<AgentRun> & { task_id: string; user_id?: string | null }; Update: Partial<AgentRun>; Relationships: []; };
+      agent_messages: { Row: AgentMessage; Insert: Partial<AgentMessage> & { run_id: string; task_id: string; user_id?: string | null; from_agent: AgentMessage['from_agent']; message_type: AgentMessage['message_type']; content: string }; Update: Partial<AgentMessage>; Relationships: []; };
+      agent_memory: { Row: AgentMemory; Insert: Partial<AgentMemory> & { user_id?: string | null; agent_id: AgentMemory['agent_id']; memory_key: string; content: Json }; Update: Partial<AgentMemory>; Relationships: []; };
       agent_events: {
         Row: AgentEvent;
         Insert: Partial<AgentEvent> & { agent_id: string; event_type: AgentEvent['event_type']; message: string };

@@ -198,26 +198,60 @@ export class ToolExecutor implements IToolExecutor {
       const title = (payload.title as string) || 'Autonomous Task';
       const assignedAgent = (payload.agent as 'LEX' | 'SUSI' | 'SPY' | 'EURO') || 'SUSI';
       const priority = (payload.priority as 'Critical' | 'High' | 'Medium' | 'Low') || 'High';
+      const objective = (payload.objective as string) || (payload.description as string) || title;
+      const autoStart = Boolean(payload.autoStart ?? payload.runPipeline ?? (assignedAgent === 'SUSI'));
 
       try {
         const created = await createTask({
           title,
           assignedAgent,
           priority,
-          category: 'Operations',
+          category: (payload.category as string) || 'Operations',
+          description: objective,
         });
         const runId = assignedAgent === 'SUSI' ? await createAgentRun(created.id) : null;
         if (runId) {
           await recordAgentMessage({
-            runId, taskId: created.id, fromAgent: 'SUSI', toAgent: 'ALL',
+            runId,
+            taskId: created.id,
+            fromAgent: 'SUSI',
+            toAgent: 'ALL',
             type: 'status',
-            content: 'Task accepted by SUSI. Planning and subtask assignment are pending runtime orchestration.',
+            content: 'Task accepted by SUSI. Autonomous multi-agent pipeline dispatched.',
             metadata: { phase: 'accepted', assignedAgent },
           });
+
+          if (autoStart) {
+            if (typeof window !== 'undefined') {
+              fetchWithDesktopAuth('/api/agents/orchestrate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  taskId: created.id,
+                  title,
+                  objective,
+                }),
+              }).catch((err) => {
+                console.warn('[ToolExecutor] Autonomous pipeline dispatch error:', err);
+              });
+            } else {
+              import('@/backend/services/multiAgentOrchestrator').then(({ multiAgentOrchestrator }) => {
+                multiAgentOrchestrator
+                  .executePipeline({
+                    taskId: created.id,
+                    title,
+                    objective,
+                  })
+                  .catch((err) => {
+                    console.warn('[ToolExecutor] Pipeline background execution error:', err);
+                  });
+              });
+            }
+          }
         }
         return {
           success: true,
-          message: `Task "${title}" created and assigned to ${assignedAgent}.${runId ? ' Manager run saved to backend.' : ' Agent-run backend persistence requires an authenticated Supabase session.'}`,
+          message: `Task "${title}" created and assigned to ${assignedAgent}.${runId ? ' Multi-agent pipeline dispatched to SUSI → SPY → EURO → LEX.' : ''}`,
           result: { ...created, agentRunId: runId },
         };
       } catch (err: unknown) {
