@@ -7,6 +7,7 @@
 
 import type { IToolExecutor } from '@/types/realtimeVoice';
 import { createTask } from '@/backend/services/taskService';
+import { createAgentRun, recordAgentMessage } from '@/backend/services/agentRuntimeService';
 import { permissionManager } from '@/lib/security/permissionManager';
 import { SecurityValidator } from '@/lib/security/securityValidator';
 import { fetchWithDesktopAuth } from '@/lib/security/desktopAuthClient';
@@ -131,59 +132,10 @@ export class ToolExecutor implements IToolExecutor {
     // 2. TERMINAL COMMAND EXECUTION
     // -------------------------------------------------------------------------
     if (actionUpper === 'EXECUTE_COMMAND' || actionUpper === 'TERMINAL_COMMAND') {
-      const command = String(payload.command || target);
-      if (!command) {
-        return { success: false, message: 'Command is required.' };
-      }
-
-      const cmdCheck = SecurityValidator.inspectCommand(command);
-      if (!cmdCheck.safe) {
-        return {
-          success: false,
-          message: `Command Blocked: ${cmdCheck.reason}`,
-        };
-      }
-
-      const permResult = await permissionManager.requestPermission({
-        actionType: 'EXECUTE_COMMAND',
-        target: command,
-        component: 'Windows Terminal / PowerShell',
-        reason: (payload.reason as string) || 'Execute command in project workspace',
-        metadata: { command },
-      });
-
-      if (!permResult.approved) {
-        return {
-          success: false,
-          message: `Execution cancelled: Permission was ${permResult.request.status.toLowerCase()}.`,
-        };
-      }
-
-      try {
-        if (typeof window !== 'undefined') {
-          const res = await fetchWithDesktopAuth('/api/local/action', {
-            method: 'POST',
-            body: JSON.stringify({
-              actionType: 'EXECUTE_COMMAND',
-              payload: { command },
-            }),
-          });
-          const data = await res.json();
-          if (!data.success) {
-            return { success: false, message: data.error || 'Command failed' };
-          }
-          return {
-            success: true,
-            message: `Command completed: ${data.stdout || data.stderr || 'Success'}`,
-            result: data,
-          };
-        }
-      } catch (err: unknown) {
-        return {
-          success: false,
-          message: `Command failed: ${err instanceof Error ? err.message : String(err)}`,
-        };
-      }
+      return {
+        success: false,
+        message: 'Command Blocked: Terminal command execution is disabled until a restricted workspace-only executor with explicit approval and execution limits is available.',
+      };
     }
 
     // -------------------------------------------------------------------------
@@ -254,10 +206,19 @@ export class ToolExecutor implements IToolExecutor {
           priority,
           category: 'Operations',
         });
+        const runId = assignedAgent === 'SUSI' ? await createAgentRun(created.id) : null;
+        if (runId) {
+          await recordAgentMessage({
+            runId, taskId: created.id, fromAgent: 'SUSI', toAgent: 'ALL',
+            type: 'status',
+            content: 'Task accepted by SUSI. Planning and subtask assignment are pending runtime orchestration.',
+            metadata: { phase: 'accepted', assignedAgent },
+          });
+        }
         return {
           success: true,
-          message: `Task "${title}" created and assigned to ${assignedAgent}.`,
-          result: created,
+          message: `Task "${title}" created and assigned to ${assignedAgent}.${runId ? ' Manager run saved to backend.' : ' Agent-run backend persistence requires an authenticated Supabase session.'}`,
+          result: { ...created, agentRunId: runId },
         };
       } catch (err: unknown) {
         return {

@@ -44,6 +44,7 @@ export class TaskOrchestrator {
   private tasks: Map<string, OrchestratedTask> = new Map();
   private listeners: Set<(tasks: OrchestratedTask[]) => void> = new Set();
   private activeTimeouts: Map<string, NodeJS.Timeout> = new Map();
+  private retryTimers: Map<string, NodeJS.Timeout> = new Map();
 
   public onTasksUpdated(cb: (tasks: OrchestratedTask[]) => void): () => void {
     this.listeners.add(cb);
@@ -159,11 +160,8 @@ export class TaskOrchestrator {
       if (task.status === 'running') {
         console.warn(`[TaskOrchestrator] Task ${task.taskId} (${task.actionType}) timed out after 15s.`);
         task.abortController?.abort();
-        task.status = 'cancelled';
-        task.error = 'Action execution timed out (15s limit reached).';
-        task.completedAt = new Date().toISOString();
-        this.notify();
-        this.cancelDependents(taskId, `Prerequisite task "${task.title}" timed out.`);
+        // A timed-out action may have side effects; never retry it automatically.
+        this.handleTaskFailure(taskId, 'Action execution timed out (15s limit reached).', false);
       }
     }, 15000);
     this.activeTimeouts.set(taskId, timeoutId);
@@ -182,7 +180,7 @@ export class TaskOrchestrator {
       this.activeTimeouts.delete(taskId);
 
       const updated = this.tasks.get(taskId);
-      if (!updated || updated.status === 'cancelled') return;
+      if (!updated || updated.status === 'cancelled' || updated.status === 'failed') return;
 
       if (pipelineResult.success) {
         task.status = 'completed';
@@ -205,12 +203,12 @@ export class TaskOrchestrator {
     }
   }
 
-  private async handleTaskFailure(taskId: string, errorMsg: string): Promise<void> {
+  private async handleTaskFailure(taskId: string, errorMsg: string, allowRetry = true): Promise<void> {
     const task = this.tasks.get(taskId);
     if (!task) return;
-    if (task.status === 'cancelled') return;
+    if (task.status === 'cancelled' || task.status === 'completed' || task.status === 'failed') return;
 
-    if (task.retryCount < task.maxRetries) {
+    if (allowRetry && task.retryCount < task.maxRetries) {
       task.retryCount += 1;
       const backoffMs = Math.min(1000 * Math.pow(2, task.retryCount), 4000);
       console.warn(`[TaskOrchestrator] Retrying task ${taskId} (attempt ${task.retryCount}/${task.maxRetries}) in ${backoffMs}ms...`);
@@ -219,9 +217,11 @@ export class TaskOrchestrator {
       task.error = `Retrying after error: ${errorMsg}`;
       this.notify();
 
-      setTimeout(() => {
+      const retryTimer = setTimeout(() => {
+        this.retryTimers.delete(taskId);
         this.executeTask(taskId);
       }, backoffMs);
+      this.retryTimers.set(taskId, retryTimer);
     } else {
       task.status = 'failed';
       task.progress = 0;
@@ -267,8 +267,10 @@ export class TaskOrchestrator {
 
   public cancelTask(taskId: string): boolean {
     const task = this.tasks.get(taskId);
-    if (!task) return false;
+    if (!task || task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') return false;
 
+    const retryTimer = this.retryTimers.get(taskId);
+    if (retryTimer) { clearTimeout(retryTimer); this.retryTimers.delete(taskId); }
     task.status = 'cancelled';
     task.abortController?.abort();
     const timeout = this.activeTimeouts.get(taskId);
@@ -287,7 +289,11 @@ export class TaskOrchestrator {
   public cancelAllTasks(): void {
     this.tasks.forEach((task) => {
       if (task.status === 'running' || task.status === 'pending') {
+        const retryTimer = this.retryTimers.get(task.taskId);
+        if (retryTimer) clearTimeout(retryTimer);
+        this.retryTimers.delete(task.taskId);
         task.status = 'cancelled';
+        ActionPipeline.cancelAction(task.taskId, 'All tasks cancelled');
         task.abortController?.abort();
         const timeout = this.activeTimeouts.get(task.taskId);
         if (timeout) clearTimeout(timeout);
@@ -295,6 +301,7 @@ export class TaskOrchestrator {
       }
     });
     this.activeTimeouts.clear();
+    this.retryTimers.clear();
     this.notify();
   }
 

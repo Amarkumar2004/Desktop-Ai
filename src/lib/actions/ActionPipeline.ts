@@ -120,7 +120,9 @@ class ActionPipelineManager {
    */
   public async dispatch(req: PipelineActionRequest): Promise<PipelineActionResult> {
     const actionId = req.id || `act_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const idempotencyKey = this.computeIdempotencyKey(req);
+    const idempotencyKey = req.source === 'orchestrator'
+      ? `ORCHESTRATOR:${actionId}`
+      : this.computeIdempotencyKey(req);
     const now = Date.now();
 
     // Check if an identical action was executed or is in-flight within the deduplication window
