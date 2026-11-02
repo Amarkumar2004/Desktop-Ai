@@ -1,27 +1,25 @@
--- ==============================================================================
--- SUSI AI: Multi-Agent Runtime Schema (Runs, Messages, Memory)
--- Supports both authenticated user isolation and desktop anonymous mode.
--- Version: 20261102132000
--- ==============================================================================
+-- SUSI AI — Multi-Agent Runtime Foundation Schema
+-- Tables: agent_runs, agent_messages, agent_memory
+-- Supports authenticated users (Supabase Auth) and desktop anonymous mode (user_id IS NULL)
 
--- 1. AGENT_RUNS: Lifecycle tracking for multi-agent executions
+-- 1. AGENT_RUNS: Autonomous Multi-Agent Swarm Execution Lifecycle
 CREATE TABLE IF NOT EXISTS public.agent_runs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  task_id text NOT NULL REFERENCES public.tasks(id) ON DELETE CASCADE,
+  task_id text NOT NULL,
   user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,
-  manager_agent text NOT NULL DEFAULT 'SUSI' CHECK (manager_agent = 'SUSI'),
-  status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','planning','running','completed','failed','cancelled')),
+  status text NOT NULL DEFAULT 'planning' CHECK (status IN ('planning','running','completed','failed','cancelled')),
+  active_agent text NOT NULL DEFAULT 'SUSI' CHECK (active_agent IN ('SUSI','SPY','EURO','LEX')),
+  completed boolean NOT NULL DEFAULT false,
   plan jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  completed_at timestamptz
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
--- 2. AGENT_MESSAGES: Structured communication log between SUSI, SPY, EURO, LEX
+-- 2. AGENT_MESSAGES: Inter-Agent Communication Stream (SUSI -> SPY -> EURO -> LEX)
 CREATE TABLE IF NOT EXISTS public.agent_messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  run_id uuid NOT NULL REFERENCES public.agent_runs(id) ON DELETE CASCADE,
-  task_id text NOT NULL REFERENCES public.tasks(id) ON DELETE CASCADE,
+  run_id uuid REFERENCES public.agent_runs(id) ON DELETE CASCADE,
+  task_id text NOT NULL,
   user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,
   from_agent text NOT NULL CHECK (from_agent IN ('SUSI','SPY','EURO','LEX')),
   to_agent text CHECK (to_agent IN ('SUSI','SPY','EURO','LEX','ALL')),
@@ -66,11 +64,28 @@ CREATE POLICY agent_runs_anon ON public.agent_runs FOR ALL TO anon
   USING (user_id IS NULL)
   WITH CHECK (user_id IS NULL);
 
--- Policies for agent_messages
+-- Policies for agent_messages (hardened run ownership for authenticated, anon for desktop)
 DROP POLICY IF EXISTS agent_messages_user_all ON public.agent_messages;
-CREATE POLICY agent_messages_user_all ON public.agent_messages FOR ALL TO authenticated
-  USING (user_id = auth.uid() OR user_id IS NULL)
-  WITH CHECK (user_id = auth.uid() OR user_id IS NULL);
+CREATE POLICY agent_messages_user_all ON public.agent_messages
+  FOR ALL TO authenticated
+  USING (
+    user_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM public.agent_runs AS own_run
+      WHERE own_run.id = agent_messages.run_id
+        AND own_run.task_id = agent_messages.task_id
+        AND (own_run.user_id = auth.uid() OR own_run.user_id IS NULL)
+    )
+  )
+  WITH CHECK (
+    user_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM public.agent_runs AS own_run
+      WHERE own_run.id = agent_messages.run_id
+        AND own_run.task_id = agent_messages.task_id
+        AND (own_run.user_id = auth.uid() OR own_run.user_id IS NULL)
+    )
+  );
 
 DROP POLICY IF EXISTS agent_messages_anon ON public.agent_messages;
 CREATE POLICY agent_messages_anon ON public.agent_messages FOR ALL TO anon
