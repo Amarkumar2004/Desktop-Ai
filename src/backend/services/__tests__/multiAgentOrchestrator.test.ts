@@ -167,15 +167,12 @@ describe('SUSI AI — Critical Runtime Audit & Production Hardening Regression S
       fs.mkdirSync(path.dirname(absPath), { recursive: true });
       fs.writeFileSync(absPath, 'Existing content', 'utf8');
 
-      // Attempt write without approvalConfirmed
-      const res = await workspaceFileWriter.writeFile(testRelPath, 'New content', {
-        allowOverwrite: false,
-        approvalConfirmed: false,
-      });
+      // Attempt write without trustedApproval
+      const res = await workspaceFileWriter.writeFile(testRelPath, 'New content', {});
 
       expect(res.success).toBe(false);
       expect(res.operation).toBe('rejected');
-      expect(res.error).toContain('Explicit user approval is required');
+      expect(res.error).toContain('Explicit trusted user approval is required');
 
       // Clean up test file
       try {
@@ -187,10 +184,7 @@ describe('SUSI AI — Critical Runtime Audit & Production Hardening Regression S
       const testRelPath = 'scratch/test_readback_verified.txt';
       const content = 'SUSI_VERIFIED_CONTENT_TOKEN_999';
 
-      const res = await workspaceFileWriter.writeFile(testRelPath, content, {
-        allowOverwrite: true,
-        approvalConfirmed: true,
-      });
+      const res = await workspaceFileWriter.writeFile(testRelPath, content);
 
       expect(res.success).toBe(true);
       expect(res.verified).toBe(true);
@@ -493,7 +487,7 @@ describe('SUSI AI — Critical Runtime Audit & Production Hardening Regression S
       const dumped = JSON.stringify(messages);
 
       expect(dumped).not.toContain(rawSecret);
-      expect(dumped).toContain('[REDACTED_API_KEY]');
+      expect(dumped).toMatch(/\[REDACTED_API_KEY\]|\[REDACTED_OPENAI_KEY\]/);
     });
   });
 });

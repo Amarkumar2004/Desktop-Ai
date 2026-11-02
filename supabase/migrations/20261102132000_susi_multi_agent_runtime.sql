@@ -53,16 +53,14 @@ ALTER TABLE public.agent_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.agent_memory ENABLE ROW LEVEL SECURITY;
 
--- 1. Policies for agent_runs (Strictly user-isolated for authenticated; user_id IS NULL for anon)
+-- 1. Policies for agent_runs (Strictly user-isolated for authenticated; anonymous data remains local)
 DROP POLICY IF EXISTS agent_runs_user_all ON public.agent_runs;
 CREATE POLICY agent_runs_user_all ON public.agent_runs FOR ALL TO authenticated
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
 
+-- Reject anonymous public access to prevent cross-installation data leakage
 DROP POLICY IF EXISTS agent_runs_anon ON public.agent_runs;
-CREATE POLICY agent_runs_anon ON public.agent_runs FOR ALL TO anon
-  USING (user_id IS NULL)
-  WITH CHECK (user_id IS NULL);
 
 -- 2. Policies for agent_messages (Strictly run-ownership verified for authenticated)
 DROP POLICY IF EXISTS agent_messages_user_all ON public.agent_messages;
@@ -87,21 +85,17 @@ CREATE POLICY agent_messages_user_all ON public.agent_messages
     )
   );
 
+-- Reject anonymous public access to prevent cross-installation data leakage
 DROP POLICY IF EXISTS agent_messages_anon ON public.agent_messages;
-CREATE POLICY agent_messages_anon ON public.agent_messages FOR ALL TO anon
-  USING (user_id IS NULL)
-  WITH CHECK (user_id IS NULL);
 
--- 3. Policies for agent_memory (Strictly user-isolated)
+-- 3. Policies for agent_memory (Strictly user-isolated for authenticated)
 DROP POLICY IF EXISTS agent_memory_user_all ON public.agent_memory;
 CREATE POLICY agent_memory_user_all ON public.agent_memory FOR ALL TO authenticated
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
 
+-- Reject anonymous public access to prevent cross-installation data leakage
 DROP POLICY IF EXISTS agent_memory_anon ON public.agent_memory;
-CREATE POLICY agent_memory_anon ON public.agent_memory FOR ALL TO anon
-  USING (user_id IS NULL)
-  WITH CHECK (user_id IS NULL);
 
 -- Updated_at triggers
 DROP TRIGGER IF EXISTS trg_agent_runs_updated_at ON public.agent_runs;

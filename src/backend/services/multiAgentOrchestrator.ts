@@ -21,8 +21,11 @@ import {
 import { updateTask, createTaskStep, updateTaskStep } from './taskService';
 import { executeAiInference } from './aiProviderService';
 import { researchRetrievalService, ResearchRetrievalResult } from './researchRetrievalService';
-import { workspaceFileWriter, FileWriteResult } from './workspaceFileWriter';
+import { workspaceFileWriter, FileWriteResult, TrustedOverwriteApproval } from './workspaceFileWriter';
+import { scrubSensitiveString, scrubSensitiveData } from './credentialScrubber';
 import type { Json, AgentMessage } from '@/backend/types/database';
+
+export { scrubSensitiveString, scrubSensitiveData };
 
 export interface MultiAgentStepRecord {
   agent: WorkforceAgentId;
@@ -79,18 +82,7 @@ export interface MultiAgentPipelineResult {
   error?: string;
 }
 
-/**
- * Scrubs sensitive credentials, tokens, and private keys from emitted logs, messages, and memories.
- */
-function scrubSensitiveData(text: string): string {
-  if (!text || typeof text !== 'string') return text;
-  return text
-    .replace(/(?:sk-[a-zA-Z0-9_\-]{20,})/g, '[REDACTED_API_KEY]')
-    .replace(/(?:AIza[0-9A-Za-z\-_]{35})/g, '[REDACTED_GEMINI_KEY]')
-    .replace(/(?:ghp_[0-9A-Za-z]{36})/g, '[REDACTED_GITHUB_KEY]')
-    .replace(/(?:Bearer\s+[a-zA-Z0-9_\-\.]{20,})/gi, 'Bearer [REDACTED_TOKEN]')
-    .replace(/(?:(?:password|secret|apiKey)\s*[:=]\s*["']?[^"'\s\n]{4,})/gi, '$1: [REDACTED]');
-}
+
 
 /**
  * Combines multiple AbortSignals safely.
@@ -556,8 +548,8 @@ Provide:
       if (shouldApplyFiles) {
         for (const art of artifacts) {
           const writeRes = await workspaceFileWriter.writeFile(art.filename, art.content, {
-            allowOverwrite: Boolean(context.allowOverwrite),
-            approvalConfirmed: Boolean(context.approvalConfirmed),
+            taskId,
+            trustedApproval: context.trustedApproval as TrustedOverwriteApproval | undefined,
           });
           fileResults.push(writeRes);
           if (writeRes.verified) {
