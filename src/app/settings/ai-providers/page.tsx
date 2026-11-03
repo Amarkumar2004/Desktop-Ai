@@ -40,6 +40,24 @@ import {
   saveStoredProviderConnections,
 } from '@/lib/ai/providerVault';
 
+/** Read the SSE test response and only accept a real model token as proof of connectivity. */
+async function readProviderTestResult(response: Response): Promise<{ ok: boolean; error?: string }> {
+  const body = await response.text();
+  if (!response.ok) return { ok: false, error: `HTTP ${response.status}: ${body.slice(0, 180)}` };
+  let receivedToken = false;
+  let providerError = '';
+  for (const line of body.split(/\r?\n/)) {
+    if (!line.startsWith('data:')) continue;
+    try {
+      const event = JSON.parse(line.slice(5).trim());
+      if (typeof event.token === 'string' && event.token.trim()) receivedToken = true;
+      if (typeof event.error === 'string') providerError = event.error;
+    } catch { /* Ignore non-JSON SSE lines. */ }
+  }
+  if (providerError) return { ok: false, error: providerError };
+  return receivedToken ? { ok: true } : { ok: false, error: 'Provider returned no model output. Check the API key and model.' };
+}
+
 export default function AiProvidersPage() {
   const [connections, setConnections] = useState<ProviderConnectionMetadata[]>(
     INITIAL_MOCK_CONNECTIONS
@@ -162,11 +180,11 @@ export default function AiProvidersPage() {
         }),
       });
 
-      if (res.ok) {
+      const verification = await readProviderTestResult(res);
+      if (verification.ok) {
         setModalTestSuccess(true);
       } else {
-        const text = await res.text();
-        setFormError(`Connection test response (${res.status}): ${text.slice(0, 100)}`);
+        setFormError(`Connection verification failed: ${verification.error || 'No valid model response'}`);
       }
     } catch (err: any) {
       setFormError(`Connection error: ${err?.message || 'Failed to ping endpoint'}`);
@@ -179,6 +197,11 @@ export default function AiProvidersPage() {
   const handleSaveConnection = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
+
+    if (!modalTestSuccess) {
+      setFormError('Verify this provider successfully before saving the connection.');
+      return;
+    }
 
     if (!apiKeyInput.trim()) {
       setFormError(`Please enter a valid ${selectedProviderConfig.keyLabel}.`);
@@ -252,13 +275,14 @@ export default function AiProvidersPage() {
         }),
       });
 
-      if (res.ok) {
+      const verification = await readProviderTestResult(res);
+      if (verification.ok) {
         triggerToast(`Connection to ${conn.providerLabel} verified.`);
       } else {
-        triggerToast(`Warning: ${conn.providerLabel} returned HTTP ${res.status}`);
+        triggerToast(`Verification failed for ${conn.providerLabel}: ${verification.error || 'No model response'}`);
       }
-    } catch {
-      triggerToast(`Connection to ${conn.providerLabel} tested.`);
+    } catch (err) {
+      triggerToast(`Could not verify ${conn.providerLabel}: ${err instanceof Error ? err.message : 'Network error'}`);
     } finally {
       setTestingCardId(null);
     }

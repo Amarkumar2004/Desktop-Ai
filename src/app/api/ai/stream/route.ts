@@ -72,7 +72,7 @@ function resolveCredentials(
   switch (providerId) {
     case 'freellm':
       return {
-        apiKey: (user.apiKey || process.env.FREELLM_API_KEY || 'free_demo_key').trim(),
+        apiKey: (user.apiKey || process.env.FREELLM_API_KEY || '').trim(),
         baseUrl: validateCustomBaseUrl(user.baseUrl || process.env.FREELLM_BASE_URL || 'https://api.freellmmap.com/v1'),
       };
     case 'google_gemini':
@@ -450,19 +450,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Default fallback to Gemini or FreeLLMMap demo
-    if (candidates.length === 0) {
-      candidates.push({
-        providerId: 'google_gemini',
-        model: 'gemini-2.0-flash',
-        label: 'Google Gemini (Default)',
-      });
-      candidates.push({
-        providerId: 'freellm',
-        model: 'deepseek/deepseek-chat',
-        label: 'FreeLLMMap Gateway (Fallback)',
-      });
-    }
+    // No configured provider means no inference. Never fabricate a demo provider or response.
   }
 
   // Set up SSE Response stream
@@ -545,22 +533,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (!success) {
-      // If all candidates failed, emit safe fallback message
-      const fallbackNotice = `// [SUSI AI Note: Live model endpoints are currently unreachable or rate-limited: ${lastError?.message || 'Upstream timeout'}]
-// Fallback demonstration code generated safely:
-export default function PreviewComponent() {
-  return (
-    <div className="p-6 bg-white rounded-2xl border border-stone-200 shadow-sm text-stone-800">
-      <h2 className="text-base font-bold text-stone-900 mb-2">Request Processed</h2>
-      <p className="text-xs text-stone-500 mb-4">${prompt.replace(/"/g, '&quot;')}</p>
-      <div className="text-xs font-mono bg-stone-50 p-3 rounded-lg border border-stone-100">
-        Status: Add your FreeLLMMap or Gemini API key in Settings → AI Providers to enable continuous streaming.
-      </div>
-    </div>
-  );
-}`;
+      const safeMessage = lastError instanceof Error
+        ? lastError.message.slice(0, 500)
+        : 'No configured AI provider is available.';
       await writer.write(
-        encoder.encode(`data: ${JSON.stringify({ token: fallbackNotice })}\n\n`)
+        encoder.encode(`data: ${JSON.stringify({ error: safeMessage })}\n\n`)
       );
     }
 
