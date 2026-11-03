@@ -232,35 +232,59 @@ export function validateDesktopAuth(req: NextRequest): {
   }
 
   // 3. Replay Protection (Nonce & Timestamp Validation)
+  // Both headers are mandatory. Accepting a session token without them would
+  // silently downgrade every protected endpoint to replayable bearer auth.
   const timestampHeader = req.headers.get(DESKTOP_TIMESTAMP_HEADER);
   const nonceHeader = req.headers.get(DESKTOP_NONCE_HEADER);
 
-  if (timestampHeader) {
-    const reqTimestamp = Number(timestampHeader);
-    if (isNaN(reqTimestamp) || Math.abs(now - reqTimestamp) > MAX_TIMESTAMP_SKEW_MS) {
-      return {
-        authorized: false,
-        reason: 'Unauthorized: Request timestamp is outside the allowable 30-second window (replay check).',
-        code: 'REPLAY_WINDOW_EXCEEDED',
-      };
-    }
+  if (!timestampHeader || !nonceHeader) {
+    return {
+      authorized: false,
+      reason: 'Unauthorized: Request timestamp and nonce headers are required.',
+      code: 'MISSING_REPLAY_HEADERS',
+    };
   }
 
-  if (nonceHeader) {
-    if (session.usedNonces.has(nonceHeader)) {
-      return {
-        authorized: false,
-        reason: 'Unauthorized: Replay attack detected. Request nonce has already been consumed.',
-        code: 'REPLAY_ATTACK_DETECTED',
-      };
-    }
-    session.usedNonces.add(nonceHeader);
-    // Limit memory footprint of nonces per session
-    if (session.usedNonces.size > 5000) {
-      session.usedNonces.clear();
-      session.usedNonces.add(nonceHeader);
-    }
+  const reqTimestamp = Number(timestampHeader);
+  if (
+    !Number.isSafeInteger(reqTimestamp) ||
+    Math.abs(now - reqTimestamp) > MAX_TIMESTAMP_SKEW_MS
+  ) {
+    return {
+      authorized: false,
+      reason: 'Unauthorized: Request timestamp is outside the allowable 30-second window (replay check).',
+      code: 'REPLAY_WINDOW_EXCEEDED',
+    };
   }
+
+  // Keep nonce input bounded and predictable before storing it in session state.
+  if (!/^[A-Za-z0-9._:-]{16,128}$/.test(nonceHeader)) {
+    return {
+      authorized: false,
+      reason: 'Unauthorized: Request nonce has an invalid format.',
+      code: 'INVALID_NONCE',
+    };
+  }
+
+  if (session.usedNonces.has(nonceHeader)) {
+    return {
+      authorized: false,
+      reason: 'Unauthorized: Replay attack detected. Request nonce has already been consumed.',
+      code: 'REPLAY_ATTACK_DETECTED',
+    };
+  }
+
+  // Never clear the replay cache: doing so would make previously used nonces
+  // valid again during the same session. Fail closed at the per-session cap.
+  if (session.usedNonces.size >= 5000) {
+    return {
+      authorized: false,
+      reason: 'Unauthorized: Desktop session request limit reached. Re-authenticate to continue.',
+      code: 'NONCE_LIMIT_EXCEEDED',
+    };
+  }
+
+  session.usedNonces.add(nonceHeader);
 
   return { authorized: true, sessionId: session.sessionId };
 }

@@ -96,6 +96,8 @@ describe('Desktop Authentication & Session Security (P0 Verification)', () => {
       method: 'POST',
       headers: {
         [DESKTOP_AUTH_HEADER]: sessionToken,
+        [DESKTOP_NONCE_HEADER]: 'nonce_valid_test_123456',
+        [DESKTOP_TIMESTAMP_HEADER]: Date.now().toString(),
       },
     });
 
@@ -121,7 +123,37 @@ describe('Desktop Authentication & Session Security (P0 Verification)', () => {
     expect(validation.code).toBe('SESSION_REVOKED');
   });
 
-  it('8. Replay Protection: Rejects duplicate request nonces', async () => {
+  it('8. Rejects authenticated requests when replay headers are missing', async () => {
+    const sessionRes = createDesktopSession(bootstrapToken);
+    const sessionToken = sessionRes.session!.token;
+    const req = new NextRequest('http://localhost:3000/api/local/action', {
+      method: 'POST',
+      headers: { [DESKTOP_AUTH_HEADER]: sessionToken },
+    });
+
+    const validation = validateDesktopAuth(req);
+    expect(validation.authorized).toBe(false);
+    expect(validation.code).toBe('MISSING_REPLAY_HEADERS');
+  });
+
+  it('9. Rejects malformed nonces without consuming the session', async () => {
+    const sessionRes = createDesktopSession(bootstrapToken);
+    const sessionToken = sessionRes.session!.token;
+    const req = new NextRequest('http://localhost:3000/api/local/action', {
+      method: 'POST',
+      headers: {
+        [DESKTOP_AUTH_HEADER]: sessionToken,
+        [DESKTOP_NONCE_HEADER]: 'short',
+        [DESKTOP_TIMESTAMP_HEADER]: Date.now().toString(),
+      },
+    });
+
+    const validation = validateDesktopAuth(req);
+    expect(validation.authorized).toBe(false);
+    expect(validation.code).toBe('INVALID_NONCE');
+  });
+
+  it('10. Replay Protection: Rejects duplicate request nonces', async () => {
     const sessionRes = createDesktopSession(bootstrapToken);
     const sessionToken = sessionRes.session!.token;
     const testNonce = `nonce_${Date.now()}_abc123`;
@@ -154,7 +186,7 @@ describe('Desktop Authentication & Session Security (P0 Verification)', () => {
     expect(replayCheck.code).toBe('REPLAY_ATTACK_DETECTED');
   });
 
-  it('9. Replay Protection: Rejects request with timestamp skewed beyond 30 seconds', async () => {
+  it('11. Replay Protection: Rejects request with timestamp skewed beyond 30 seconds', async () => {
     const sessionRes = createDesktopSession(bootstrapToken);
     const sessionToken = sessionRes.session!.token;
     const staleTimestamp = (Date.now() - 45000).toString(); // 45 seconds old
