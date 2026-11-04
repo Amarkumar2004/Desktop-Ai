@@ -56,7 +56,7 @@ import DiagnosticsModal from '@/components/modals/DiagnosticsModal';
 import PermissionModal from '@/components/modals/PermissionModal';
 import UserDropdown from '@/components/account/UserDropdown';
 
-import { Agent, TaskItem } from '@/types/dashboard';
+import { Agent, TaskItem, NotificationItem } from '@/types/dashboard';
 
 import {
   Activity,
@@ -263,7 +263,7 @@ function DashboardContent() {
   }, [searchParams]);
 
   // Notifications State
-  const [notifications, setNotifications] = useState([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   // Load persistent tasks, agents & notifications on mount
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -933,9 +933,9 @@ function DashboardContent() {
                     <button
                       onClick={() => setIsAnalyticsModalOpen(true)}
                       title="Click for full telemetry"
-                      className="text-[10px] font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-200 transition-colors flex items-center gap-1"
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors flex items-center gap-1 ${telemetryAvailable ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : 'text-stone-500 bg-stone-50 border-stone-200'}`}
                     >
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      <span className={`w-1.5 h-1.5 rounded-full ${telemetryAvailable ? 'bg-emerald-500 animate-pulse' : 'bg-stone-400'}`} />
                       {telemetryAvailable ? 'Live' : 'Unavailable'}
                     </button>
                   </div>
