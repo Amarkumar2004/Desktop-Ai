@@ -7,7 +7,6 @@ import { useToast } from '@/lib/toast/ToastContext';
 import {
   getStoredTasks,
   getTasks,
-  createTask as apiCreateTask,
   updateTask as apiUpdateTask,
   deleteTask as apiDeleteTask,
   toggleTaskCompleted as apiToggleTask,
@@ -609,46 +608,45 @@ function DashboardContent() {
     setConsoleLogs((prev) => [...prev, `${ts} [COMMAND] ${cmd}`, reply]);
   };
 
-  // Handle Create Task with schema validation & persistent storage
+  // Dispatch new work through the authenticated multi-agent orchestrator.
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTaskTitle.trim()) {
+    const title = newTaskTitle.trim();
+    if (!title) {
       toastError('Validation Error', 'Please enter a task title.');
       return;
     }
-
-    const ts = getConsoleTimestamp();
-    const created: TaskItem = {
-      id: `task-${Date.now()}`,
-      title: newTaskTitle.trim(),
-      assignedAgent: newTaskAgent,
-      progress: 5,
-      priority: newTaskPriority,
-      category: 'Operations',
-    };
-
-    const updated = [created, ...tasks];
-    setTasks(updated);
-    saveStoredTasks(updated);
-    apiCreateTask(created).catch(() => {});
-
-    success('Task Dispatched!', `"${created.title}" assigned to ${created.assignedAgent}`);
-
-    setConsoleLogs((prev) => [
-      ...prev,
-      `${ts} [TASK] Created: "${created.title}" assigned to ${created.assignedAgent} [${created.priority}]`,
-    ]);
-    setNewsLogs((prev) => [
-      {
-        id: Date.now(),
-        text: `New task "${created.title}" assigned to ${created.assignedAgent}`,
-        time: 'Just now',
-        dot: 'bg-amber-500',
-      },
-      ...prev.slice(0, 5),
-    ]);
-    setNewTaskTitle('');
-    setIsNewTaskModalOpen(false);
+    try {
+      const response = await fetch('/api/agents/orchestrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ title, objective: title, priority: newTaskPriority }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result?.taskId) {
+        throw new Error(result?.error || 'The orchestration service did not accept this task.');
+      }
+      const created: TaskItem = {
+        id: String(result.taskId),
+        title,
+        assignedAgent: 'SUSI',
+        progress: result.success ? 100 : 90,
+        priority: newTaskPriority,
+        category: 'Operations',
+        completed: Boolean(result.success),
+      };
+      const updated = [created, ...tasks.filter((task) => task.id !== created.id)];
+      setTasks(updated);
+      saveStoredTasks(updated);
+      setConsoleLogs((prev) => [...prev, `${getConsoleTimestamp()} [ORCHESTRATOR] ${result.success ? 'VERIFIED' : 'FAILED'}: "${title}" — ${result.status || 'unknown'}`]);
+      if (result.success) success('Task completed', result.finalOutput || 'SUSI verified the task output.');
+      else toastError('Task execution failed', result.error || result.susiVerification?.auditNotes || 'The task was not verified. Check the task run details.');
+      setNewTaskTitle('');
+      setIsNewTaskModalOpen(false);
+    } catch (error) {
+      toastError('Task was not dispatched', error instanceof Error ? error.message : 'Orchestration request failed.');
+    }
   };
 
   const filteredTasks = tasks.filter((t) => {
