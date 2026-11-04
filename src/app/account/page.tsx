@@ -73,10 +73,10 @@ export default function AccountSettingsPage() {
   // Profile Form State
   const [profile, setProfile] = useState<UserProfile>(() => ({
     ...INITIAL_USER_PROFILE,
-    fullName: user?.fullName || INITIAL_USER_PROFILE.fullName,
-    email: user?.email || INITIAL_USER_PROFILE.email,
-    role: user?.role || INITIAL_USER_PROFILE.role,
-    avatarInitials: user?.avatarInitials || INITIAL_USER_PROFILE.avatarInitials,
+    fullName: user?.fullName || '',
+    email: user?.email || '',
+    role: user?.role || '',
+    avatarInitials: user?.avatarInitials || '',
   }));
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
@@ -88,7 +88,7 @@ export default function AccountSettingsPage() {
   const [notifSaved, setNotifSaved] = useState(false);
 
   // Security State
-  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>(INITIAL_ACTIVE_SESSIONS);
+  const [activeSessions] = useState<ActiveSession[]>(INITIAL_ACTIVE_SESSIONS);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -107,14 +107,14 @@ export default function AccountSettingsPage() {
   const [highContrast, setHighContrast] = useState(false);
 
   // Workspace State
-  const [members, setMembers] = useState<WorkspaceMember[]>(INITIAL_WORKSPACE_MEMBERS);
+  const [members] = useState<WorkspaceMember[]>(INITIAL_WORKSPACE_MEMBERS);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'Member' | 'Admin'>('Member');
   const [inviteSent, setInviteSent] = useState(false);
 
   // Billing State
-  const [billing, setBilling] = useState<BillingUsage>(INITIAL_BILLING_USAGE);
+  const [billing] = useState<BillingUsage>(INITIAL_BILLING_USAGE);
   const [showBillingSuccess, setShowBillingSuccess] = useState(false);
 
   // Navigation tab definitions
@@ -179,33 +179,13 @@ export default function AccountSettingsPage() {
 
   // Handle Revoke Sessions
   const handleSignOutOfAllDevices = () => {
-    setActiveSessions((prev) => prev.filter((s) => s.isCurrent));
-    setSessionsRevoked(true);
-    info('Sessions Revoked', 'Signed out from other connected devices.');
-    setTimeout(() => setSessionsRevoked(false), 4000);
+    info('Session management unavailable', 'Connected session records are not currently provided by the authentication backend.');
   };
 
   // Handle Member Invite
   const handleSendInvite = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteEmail.trim()) return;
-    const newMember: WorkspaceMember = {
-      id: `mem-${Date.now()}`,
-      name: inviteEmail.split('@')[0],
-      email: inviteEmail.trim(),
-      role: inviteRole,
-      avatarInitials: inviteEmail.slice(0, 2).toUpperCase(),
-      status: 'Pending',
-      joinedDate: 'Invited just now',
-    };
-    setMembers((prev) => [...prev, newMember]);
-    setInviteSent(true);
-    success('Invitation Dispatched', `Workspace invite sent to ${inviteEmail}`);
-    setTimeout(() => {
-      setInviteSent(false);
-      setShowInviteModal(false);
-      setInviteEmail('');
-    }, 1200);
+    toastError('Invitations unavailable', 'Workspace invitation service is not connected. No invitation was sent.');
   };
 
   return (
@@ -950,7 +930,7 @@ export default function AccountSettingsPage() {
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <h3 className="text-lg font-bold text-stone-900">
-                          {billing.plan} Plan
+                          Billing: {billing.plan}
                         </h3>
                         <Badge variant="amber" size="sm">
                           Free Forever
@@ -1189,22 +1169,10 @@ export default function AccountSettingsPage() {
                   the 6-digit verification code below.
                 </p>
 
-                {/* Mock QR Code Box */}
-                <div className="w-36 h-36 mx-auto bg-stone-100 border-2 border-dashed border-stone-300 rounded-xl flex flex-col items-center justify-center p-2 text-center select-none">
-                  <div className="grid grid-cols-4 gap-1 p-2 bg-stone-800 rounded-lg">
-                    {[...Array(16)].map((_, i) => (
-                      <div
-                        key={i}
-                        className={`w-3 h-3 ${
-                          i % 2 === 0 || i % 3 === 0 ? 'bg-white' : 'bg-transparent'
-                        }`}
-                      />
-                    ))}
-                  </div>
-                  <span className="text-[9px] text-stone-400 font-mono mt-1">SUSI-2FA-DEMO</span>
-                </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">Two-factor authentication setup is unavailable because no TOTP enrollment backend is connected. No QR code or verification secret has been generated.</div>
 
                 <Input
+                  disabled
                   label="Verification Code"
                   placeholder="000 000"
                   value={twoFactorCode}
