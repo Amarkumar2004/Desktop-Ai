@@ -56,7 +56,6 @@ import DiagnosticsModal from '@/components/modals/DiagnosticsModal';
 import PermissionModal from '@/components/modals/PermissionModal';
 import UserDropdown from '@/components/account/UserDropdown';
 
-import { INITIAL_AGENTS, INITIAL_NOTIFICATIONS, INITIAL_METRICS } from '@/data/initialData';
 import { Agent, TaskItem } from '@/types/dashboard';
 
 import {
@@ -113,6 +112,7 @@ function DashboardContent() {
 
   // Live telemetry state
   const [cpuUsage, setCpuUsage] = useState(0);
+  const [telemetryAvailable, setTelemetryAvailable] = useState(false);
   const [memoryUsage, setMemoryUsage] = useState(0);
   const [gpuUsage, setGpuUsage] = useState(0);
   const [vramUsage, setVramUsage] = useState(0);
@@ -187,7 +187,8 @@ function DashboardContent() {
 
         if (typeof invokeFn === 'function') {
           const data = await invokeFn('get_system_metrics');
-          if (data) {
+          if (data && typeof data === 'object') {
+            setTelemetryAvailable(true);
             if (typeof data.cpu_percent === 'number' && !isNaN(data.cpu_percent)) {
               setCpuUsage(Math.min(100, Math.max(0, Math.round(data.cpu_percent))));
             }
@@ -221,6 +222,7 @@ function DashboardContent() {
           }
         }
       } catch (err) {
+        setTelemetryAvailable(false);
         console.warn('[Tauri Telemetry] Native hardware metric error:', err);
       }
     }
@@ -260,21 +262,12 @@ function DashboardContent() {
     }
   }, [searchParams]);
 
-  // Simulated live fluctuating telemetry
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCpuUsage((prev) => Math.min(65, Math.max(18, prev + Math.floor(Math.random() * 5 - 2))));
-      setMemoryUsage((prev) => Math.min(75, Math.max(45, prev + Math.floor(Math.random() * 3 - 1))));
-    }, 4000);
-    return () => clearInterval(interval);
-  }, []);
-
   // Notifications State
-  const [notifications, setNotifications] = useState(INITIAL_NOTIFICATIONS);
+  const [notifications, setNotifications] = useState([]);
 
   // Load persistent tasks, agents & notifications on mount
   const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [agents, setAgents] = useState<Agent[]>(INITIAL_AGENTS);
+  const [agents, setAgents] = useState<Agent[]>([]);
 
   useEffect(() => {
     const loadedTasks = getStoredTasks();
@@ -309,11 +302,7 @@ function DashboardContent() {
   }
 
   // Console State with timestamped records
-  const [consoleLogs, setConsoleLogs] = useState<string[]>([
-    `[12:00:01] [SYSTEM] SUSI AI v2.1.0 initialized // Fleet optimal`,
-    `[12:00:03] [AGENT] 4/4 autonomous agents connected & synced`,
-    `[12:00:05] [TASK] Queue ready. Type 'help' for available commands.`,
-  ]);
+  const [consoleLogs, setConsoleLogs] = useState<string[]>([]);
   const [commandInput, setCommandInput] = useState('');
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
@@ -327,11 +316,7 @@ function DashboardContent() {
   const [newTaskPriority, setNewTaskPriority] = useState<'High' | 'Critical' | 'Medium' | 'Low'>('High');
 
   // News Feed Logs State
-  const [newsLogs, setNewsLogs] = useState([
-    { id: 1, text: 'AI model v2.1 deployed successfully across all nodes', time: '10m ago', dot: 'bg-amber-500' },
-    { id: 2, text: 'New agent "Susi" joined the autonomous swarm', time: '25m ago', dot: 'bg-emerald-500' },
-    { id: 3, text: 'Zero-trust perimeter security scan completed: 0 flags', time: '1h ago', dot: 'bg-blue-500' },
-  ]);
+  const [newsLogs, setNewsLogs] = useState<{ id: number; text: string; time: string; dot: string }[]>([]);
 
   // Handle Tab Navigation Click with URL synchronization
   const handleNavClick = (tab: string) => {
@@ -951,7 +936,7 @@ function DashboardContent() {
                       className="text-[10px] font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-200 transition-colors flex items-center gap-1"
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      Live
+                      {telemetryAvailable ? 'Live' : 'Unavailable'}
                     </button>
                   </div>
 
@@ -974,7 +959,7 @@ function DashboardContent() {
                         <span className="text-stone-500 group-hover:text-amber-800 font-medium flex items-center gap-1.5 transition-colors">
                           <Cpu className="w-3.5 h-3.5 text-stone-400" /> CPU Usage
                         </span>
-                        <span className="font-bold text-stone-800 font-mono">{cpuUsage}%</span>
+                        <span className="font-bold text-stone-800 font-mono">{telemetryAvailable ? `${cpuUsage}%` : '—'}</span>
                       </div>
                       <div className="w-full h-1.5 bg-stone-100 rounded-full overflow-hidden">
                         <div
@@ -994,7 +979,7 @@ function DashboardContent() {
                         <span className="text-stone-500 group-hover:text-amber-800 font-medium flex items-center gap-1.5 transition-colors">
                           <Radio className="w-3.5 h-3.5 text-stone-400" /> Memory Usage
                         </span>
-                        <span className="font-bold text-stone-800 font-mono">{memoryUsage}%</span>
+                        <span className="font-bold text-stone-800 font-mono">{telemetryAvailable ? `${memoryUsage}%` : '—'}</span>
                       </div>
                       <div className="w-full h-1.5 bg-stone-100 rounded-full overflow-hidden">
                         <div
@@ -1014,7 +999,7 @@ function DashboardContent() {
                         <span className="text-stone-500 group-hover:text-purple-800 font-medium flex items-center gap-1.5 transition-colors">
                           <Zap className="w-3.5 h-3.5 text-purple-500" /> GPU Load
                         </span>
-                        <span className="font-bold text-purple-700 font-mono">{gpuUsage}%</span>
+                        <span className="font-bold text-purple-700 font-mono">{telemetryAvailable ? `${gpuUsage}%` : '—'}</span>
                       </div>
                       <div className="w-full h-1.5 bg-purple-50 rounded-full overflow-hidden">
                         <div
