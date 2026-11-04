@@ -4,15 +4,7 @@ import { createClient, isSupabaseConfigured } from '@/backend/supabase/client';
 
 const STORAGE_KEY_TASKS = 'susi_ai_tasks_v3';
 
-const DEFAULT_TASKS: TaskItem[] = INITIAL_TASKS.map((t) => ({
-  id: t.id,
-  title: t.title,
-  assignedAgent: (t.assignedAgent as 'LEX' | 'SUSI' | 'SPY' | 'EURO') || 'SUSI',
-  progress: t.progress,
-  priority: (t.priority as 'High' | 'Critical' | 'Medium' | 'Low') || 'Medium',
-  category: t.category || 'System',
-  completed: t.progress === 100,
-}));
+const DEFAULT_TASKS: TaskItem[] = [];
 
 let memoryTasks: TaskItem[] | null = null;
 
