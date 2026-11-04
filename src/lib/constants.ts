@@ -84,67 +84,67 @@ export interface SeatActivityDef {
 export const SEAT_ACTIVITIES: SeatActivityDef[] = [
   {
     emote: "emote:sleep",
-    bubbles: ["Zzz...", "So sleepy...", "*dozing off*"],
+    bubbles: ["Idle — awaiting task"],
     minDuration: 6000,
     maxDuration: 14000,
   },
   {
     emote: "emote:sleep",
-    bubbles: ["*stretch*", "*yawn~*", "5 more minutes..."],
+    bubbles: ["Idle — awaiting task"],
     minDuration: 4000,
     maxDuration: 8000,
   },
   {
     emote: "emote:thinking",
-    bubbles: ["Hmm...", "Let me think...", "How does this work?"],
+    bubbles: ["Idle — awaiting task"],
     minDuration: 5000,
     maxDuration: 10000,
   },
   {
     emote: "emote:thinking",
-    bubbles: ["Reading docs...", "Taking notes...", "Interesting~"],
+    bubbles: ["Idle — awaiting task"],
     minDuration: 5000,
     maxDuration: 10000,
   },
   {
     emote: "emote:device",
-    bubbles: ["Debugging...", "Writing code~", "Fixing bugs..."],
+    bubbles: ["Idle — awaiting task"],
     minDuration: 5000,
     maxDuration: 12000,
   },
   {
     emote: "emote:device",
-    bubbles: ["Refactoring~", "Almost done!", "One more test..."],
+    bubbles: ["Idle — awaiting task"],
     minDuration: 4000,
     maxDuration: 8000,
   },
   {
     emote: "emote:star",
-    bubbles: ["Got it!", "Eureka!", "Great idea!"],
+    bubbles: ["Idle — awaiting task"],
     minDuration: 2000,
     maxDuration: 4000,
   },
   {
     emote: "emote:heart",
-    bubbles: ["Feeling great!", "Love this~", "Best day ever!"],
+    bubbles: ["Idle — awaiting task"],
     minDuration: 3000,
     maxDuration: 5000,
   },
   {
     emote: "emote:music",
-    bubbles: ["~♪♪~", "Humming~", "Good vibes~"],
+    bubbles: ["Idle — awaiting task"],
     minDuration: 3000,
     maxDuration: 6000,
   },
   {
     emote: "emote:confused",
-    bubbles: ["Huh?", "This is weird...", "What happened?"],
+    bubbles: ["Idle — awaiting task"],
     minDuration: 3000,
     maxDuration: 6000,
   },
   {
     emote: "emote:angry",
-    bubbles: ["Ugh...", "This bug...", "Not again!"],
+    bubbles: ["Idle — awaiting task"],
     minDuration: 2000,
     maxDuration: 4000,
   },
@@ -152,12 +152,12 @@ export const SEAT_ACTIVITIES: SeatActivityDef[] = [
 
 // ── POI bubble texts ─────────────────────────────────────
 export const POI_BUBBLE_TEXTS: Record<string, string[]> = {
-  water: ["Getting water...", "Staying hydrated!", "Refilling bottle~"],
-  printer: ["Checking prints...", "Printing docs...", "Paper jam again?"],
-  book: ["Browsing books...", "Looking up reference~", "Good read!"],
-  whiteboard: ["Reviewing plans...", "Sketching ideas~", "Hmm, let me think..."],
-  sofa: ["Taking a break~", "Quick rest...", "So comfy..."],
-  coffee: ["Need caffeine!", "Making coffee~", "Espresso time!"],
+  water: ["Idle — no active task"],
+  printer: ["Idle — no active task"],
+  book: ["Idle — no active task"],
+  whiteboard: ["Idle — no active task"],
+  sofa: ["Idle — no active task"],
+  coffee: ["Idle — no active task"],
 };
 
 // ── Scene constants ──────────────────────────────────────
