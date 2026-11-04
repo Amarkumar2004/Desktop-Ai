@@ -243,14 +243,12 @@ export function getUnifiedModelsList(
     },
   ];
 
-  const connected = connections.filter((c) => c.status === 'connected');
+  const connected = connections.filter((c) => c.status === 'connected' && Array.isArray(c.availableModels) && c.availableModels.length > 0);
 
   for (const conn of connected) {
     const providerConfig = AI_PROVIDERS_CATALOG.find((p) => p.id === conn.provider);
     const providerName = conn.displayName || providerConfig?.name || conn.providerLabel;
-    const models = conn.availableModels.length > 0
-      ? conn.availableModels
-      : (providerConfig?.defaultModels || ['default-model']);
+    const models = Array.isArray(conn.availableModels) ? conn.availableModels : [];
 
     for (const model of models) {
       options.push({
