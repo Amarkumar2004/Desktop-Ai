@@ -47,7 +47,7 @@ export async function getAgents(): Promise<Agent[]> {
         }
       }
     } catch (err) {
-      console.warn('[agentService] Supabase agents fallback to local cache:', err);
+      console.warn('[agentService] Supabase agent query failed:', err);
     }
   }
 
