@@ -20,7 +20,7 @@ export default function AnalysisView({
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [source, setSource] = useState<'database' | 'local' | 'unavailable'>('unavailable');
+  const [source, setSource] = useState<'available' | 'unavailable'>('unavailable');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -33,7 +33,7 @@ export default function AnalysisView({
         if (cancelled) return;
         setTasks(taskRows);
         setAgents(agentRows);
-        setSource(taskRows.length || agentRows.length ? 'database' : 'unavailable');
+        setSource(taskRows.length || agentRows.length ? 'available' : 'unavailable');
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Unable to load analytics data.');
@@ -79,7 +79,7 @@ export default function AnalysisView({
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] rounded-lg border border-stone-200 px-2 py-1 text-stone-500">
-            {loading ? 'Loading data…' : source === 'database' ? 'Data received' : 'No analytics data'}
+            {loading ? 'Loading data…' : source === 'available' ? 'Records available' : 'No analytics data'}
           </span>
           {onNavigateToDashboard && <button onClick={onNavigateToDashboard} className="px-3 py-1.5 text-xs font-semibold text-stone-600 bg-stone-50 border border-stone-200 rounded-xl">Back to Dashboard</button>}
         </div>
@@ -91,7 +91,7 @@ export default function AnalysisView({
         <button onClick={onNavigateToTasks} className="text-left bg-white border border-stone-200 rounded-2xl p-4">
           <span className="text-xs text-stone-500 flex items-center gap-2"><Layers className="w-4 h-4" /> Total tasks</span>
           <strong className="block text-2xl mt-2">{loading ? '…' : value(tasks.length)}</strong>
-          <span className="text-[11px] text-stone-400">Persisted task records</span>
+          <span className="text-[11px] text-stone-400">Available task records</span>
         </button>
         <button onClick={onNavigateToTasks} className="text-left bg-white border border-stone-200 rounded-2xl p-4">
           <span className="text-xs text-stone-500 flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> Completed tasks</span>
