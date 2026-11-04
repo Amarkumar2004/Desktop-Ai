@@ -2,19 +2,16 @@ import type { Agent, AgentStatus, AgentId } from '@/types/dashboard';
 import { INITIAL_AGENTS } from '@/data/initialData';
 import { createClient, isSupabaseConfigured } from '@/backend/supabase/client';
 
-const STORAGE_KEY_AGENTS = 'susi_ai_agents_v2';
+const STORAGE_KEY_AGENTS = 'susi_ai_agents_v3';
 
 export function getStoredAgents(): Agent[] {
-  if (typeof window === 'undefined') return INITIAL_AGENTS;
+  if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY_AGENTS);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEY_AGENTS, JSON.stringify(INITIAL_AGENTS));
-      return INITIAL_AGENTS;
-    }
+    if (!raw) return [];
     return JSON.parse(raw);
   } catch {
-    return INITIAL_AGENTS;
+    return [];
   }
 }
 
@@ -34,16 +31,17 @@ export async function getAgents(): Promise<Agent[]> {
       const supabase = createClient();
       if (supabase) {
         const { data, error } = await (supabase as any).from('agents').select('*');
-        if (!error && data && data.length > 0) {
+        if (!error && data) {
           const mapped: Agent[] = data.map((a: any) => {
-            const match = INITIAL_AGENTS.find((ia) => ia.id.toLowerCase() === a.id?.toLowerCase()) || INITIAL_AGENTS[0];
+            const match = INITIAL_AGENTS.find((ia) => ia.id.toLowerCase() === a.id?.toLowerCase());
+            if (!match) return null;
             return {
               ...match,
               name: a.name || match.name,
               role: a.role || match.role,
               status: (a.status as AgentStatus) || match.status,
             };
-          });
+          }).filter((agent: Agent | null): agent is Agent => agent !== null);
           saveStoredAgents(mapped);
           return mapped;
         }
@@ -53,7 +51,7 @@ export async function getAgents(): Promise<Agent[]> {
     }
   }
 
-  return getStoredAgents();
+  return [];
 }
 
 export async function updateAgentStatus(
