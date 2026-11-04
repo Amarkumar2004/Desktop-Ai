@@ -1,6 +1,5 @@
 import type { TaskItem } from '@/types/dashboard';
 import type { Task, TaskStep, Json } from '@/backend/types/database';
-import { INITIAL_TASKS } from '@/data/initialData';
 import { createClient, isSupabaseConfigured } from '@/backend/supabase/client';
 
 const STORAGE_KEY_TASKS = 'susi_ai_tasks_v3';
