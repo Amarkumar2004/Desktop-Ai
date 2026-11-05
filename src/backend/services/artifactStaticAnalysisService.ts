@@ -79,9 +79,9 @@ export function analyzeGeneratedArtifacts(
     }
 
     const unsafePatterns: Array<[RegExp, string, string]> = [
-      [/\\beval\\s*\\(/, 'DYNAMIC_EVAL', 'Dynamic eval() can execute untrusted code.'],
-      [/\\bnew\\s+Function\\s*\\(/, 'DYNAMIC_FUNCTION', 'The Function constructor can execute dynamically supplied code.'],
-      [/\\bchild_process\\b|\\bexecSync\\s*\\(|\\bspawnSync\\s*\\(/, 'PROCESS_EXECUTION', 'Direct process execution requires a separately approved, contained execution path.'],
+      [/\beval\s*\(/, 'DYNAMIC_EVAL', 'Dynamic eval() can execute untrusted code.'],
+      [/\bnew\s+Function\s*\(/, 'DYNAMIC_FUNCTION', 'The Function constructor can execute dynamically supplied code.'],
+      [/\bchild_process\b|\bexecSync\s*\(|\bspawnSync\s*\(/, 'PROCESS_EXECUTION', 'Direct process execution requires a separately approved, contained execution path.'],
     ];
     for (const [pattern, code, message] of unsafePatterns) {
       if (pattern.test(content)) {
