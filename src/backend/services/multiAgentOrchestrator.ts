@@ -535,7 +535,7 @@ Provide:
       while ((match = codeBlockRegex.exec(lexResult.text)) !== null) {
         const lang = match[1] || 'text';
         const code = match[2];
-        const fileMatch = code.match(/^\/\/\s*File:\s*([^\r\n]+)/m);
+          const fileMatch = code.match(/^\/\/\s*File:\s*([^\r\n]+)/m);
         const filename = fileMatch
           ? fileMatch[1].trim()
           : `deliverable_${artifactIndex}.${lang === 'typescript' || lang === 'tsx' ? 'tsx' : lang === 'json' ? 'json' : 'ts'}`;
@@ -585,7 +585,7 @@ Return corrected complete artifacts only. Preserve every required file path and 
         while ((match = codeBlockRegex.exec(lexResult.text)) !== null) {
           const lang = match[1] || 'text';
           const code = match[2];
-          const fileMatch = code.match(/^\\/\\/\\s*File:\\s*([^\\r\\n]+)/m);
+          const fileMatch = code.match(/^\/\/\s*File:\s*([^\r\n]+)/m);
           const filename = fileMatch
             ? fileMatch[1].trim()
             : `deliverable_${artifactIndex}.${lang === 'typescript' || lang === 'tsx' ? 'tsx' : lang === 'json' ? 'json' : 'ts'}`;
