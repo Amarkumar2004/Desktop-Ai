@@ -138,20 +138,26 @@ export class MultiAgentOrchestrator {
     }
 
     // 1. Initialize Agent Run with owner identity
-    const runId = await createAgentRun(
-      taskId,
-      [
-        { step: 1, agent: 'SUSI', role: 'Task Decomposition & Planning' },
-        { step: 2, agent: 'SPY', role: 'Deep Research & Technical Intelligence' },
-        { step: 3, agent: 'EURO', role: 'Analytical Synthesis & Risk Blueprint' },
-        { step: 4, agent: 'LEX', role: 'Implementation Deliverables & Execution' },
-        { step: 5, agent: 'SUSI', role: 'Structured Verification & Audit' },
-      ],
-      userId
-    );
+    let runId: string;
+    try {
+      runId = await createAgentRun(
+        taskId,
+        [
+          { step: 1, agent: 'SUSI', role: 'Task Decomposition & Planning' },
+          { step: 2, agent: 'SPY', role: 'Deep Research & Technical Intelligence' },
+          { step: 3, agent: 'EURO', role: 'Analytical Synthesis & Risk Blueprint' },
+          { step: 4, agent: 'LEX', role: 'Implementation Deliverables & Execution' },
+          { step: 5, agent: 'SUSI', role: 'Structured Verification & Audit' },
+        ],
+        userId
+      );
 
-    await updateAgentRun(runId, { status: 'planning' });
-    await updateTask(taskId, { progress: 5, status: 'in_progress', completed: false });
+      await updateAgentRun(runId, { status: 'planning' });
+      await updateTask(taskId, { progress: 5, status: 'in_progress', completed: false });
+    } catch (initializationError) {
+      this.activePipelines.delete(taskId);
+      throw initializationError;
+    }
 
     // Helper to log scrubbed message and trigger progress
     const logAndEmit = async (
