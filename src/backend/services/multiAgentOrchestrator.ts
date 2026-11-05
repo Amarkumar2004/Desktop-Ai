@@ -786,16 +786,18 @@ You MUST end your output with a strict JSON evaluation block in exactly this for
         ? parsedVerdict?.fileOperationsVerified === true && verifiedFilesCount === fileResults.length && fileResults.length > 0
         : true;
 
+      const evidenceCheckPassed = parsedVerdict?.evidenceCredible === true;
       const isVerified = Boolean(
         parsedVerdict &&
           hasPassVerdict &&
           criteriaMet &&
+          evidenceCheckPassed &&
           fileCheckPassed &&
           allRequestedFilesSucceeded
       );
 
       const finalVerdictString: 'VERIFIED_PASS' | 'VERIFIED_FAIL' = isVerified ? 'VERIFIED_PASS' : 'VERIFIED_FAIL';
-      const auditNotes = parsedVerdict?.auditNotes || (isVerified ? 'All criteria satisfied.' : 'Verification failed: missing or rejected criteria.');
+      const auditNotes = parsedVerdict?.auditNotes || (isVerified ? 'All criteria satisfied.' : 'Verification failed: missing, unsupported, or rejected criteria/evidence.');
       const executiveSummary = parsedVerdict?.executiveSummary || susiVerifyResult.text;
 
       stage5Record.status = isVerified ? 'completed' : 'failed';
