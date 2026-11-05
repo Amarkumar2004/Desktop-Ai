@@ -22,7 +22,7 @@ interface AuthContextType {
   login: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
   signup: (data: { fullName: string; email: string; workspaceName: string; password?: string }) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
-  updateProfile: (data: Partial<UserProfile>) => void;
+  updateProfile: (data: Partial<UserProfile>) => Promise<{ success: boolean; error?: string }>;
 }
 
 function getInitials(name: string): string {
@@ -142,12 +142,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     router.push('/login');
   }, [router]);
 
-  const updateProfile = useCallback((data: Partial<UserProfile>) => {
-    setUser((prev) => prev ? {
-      ...prev,
-      ...data,
-      avatarInitials: data.fullName ? getInitials(data.fullName) : prev.avatarInitials,
-    } : null);
+  const updateProfile = useCallback(async (data: Partial<UserProfile>) => {
+    if (!isSupabaseConfigured()) {
+      return { success: false, error: 'Profile persistence is unavailable because Supabase is not configured.' };
+    }
+    const supabase = createSupabaseClient();
+    if (!supabase) return { success: false, error: 'Unable to initialize the profile service.' };
+
+    const metadata: Record<string, string> = {};
+    if (typeof data.fullName === 'string') metadata.full_name = data.fullName.trim();
+    if (typeof data.workspaceName === 'string') metadata.workspace_name = data.workspaceName.trim();
+    if (Object.keys(metadata).length === 0) {
+      return { success: false, error: 'No supported profile fields were supplied.' };
+    }
+
+    const { data: updated, error } = await supabase.auth.updateUser({ data: metadata });
+    if (error || !updated.user) {
+      return { success: false, error: error?.message || 'Supabase did not confirm the profile update.' };
+    }
+
+    setUser(mapSupabaseUser(updated.user));
+    return { success: true };
   }, []);
 
   return (
