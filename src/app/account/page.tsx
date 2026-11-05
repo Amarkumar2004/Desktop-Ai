@@ -128,31 +128,32 @@ export default function AccountSettingsPage() {
   ];
 
   // Handle Profile Save
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setProfileSaving(true);
-    setTimeout(() => {
-      setProfileSaving(false);
-      setProfileSaved(true);
-      updateProfile({
+    setProfileSaved(false);
+    try {
+      const result = await updateProfile({
         fullName: profile.fullName,
-        email: profile.email,
-        role: profile.role,
+        workspaceName: profile.workspaceName,
       });
-      success('Profile Updated', 'Your account details have been saved.');
-      setTimeout(() => setProfileSaved(false), 3000);
-    }, 600);
+      if (!result.success) {
+        toastError('Profile not saved', result.error || 'The profile service did not confirm the update.');
+        return;
+      }
+      setProfileSaved(true);
+      success('Profile Updated', 'Your name and workspace name were saved to your authenticated account.');
+    } catch (err) {
+      toastError('Profile not saved', err instanceof Error ? err.message : 'The profile update failed.');
+    } finally {
+      setProfileSaving(false);
+    }
   };
 
   // Handle Notifications Save
   const handleSaveNotifications = () => {
-    setNotifSaving(true);
-    setTimeout(() => {
-      setNotifSaving(false);
-      setNotifSaved(true);
-      success('Preferences Saved', 'Your notification alert preferences were updated.');
-      setTimeout(() => setNotifSaved(false), 3000);
-    }, 600);
+    setNotifSaved(false);
+    toastError('Notification preferences unavailable', 'A persistent notification-preferences endpoint is not connected. No changes were saved.');
   };
 
   // Handle Password Update
