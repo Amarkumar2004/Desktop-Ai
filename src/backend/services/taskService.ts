@@ -290,11 +290,15 @@ export async function getTaskSteps(taskId: string): Promise<TaskStep[]> {
           .select('*')
           .eq('task_id', taskId)
           .order('step_index', { ascending: true });
-        if (!error && data) {
+        if (error) throw new Error(`Failed to fetch task steps: ${error.message} (${error.code})`);
+        if (data) {
           memoryTaskSteps.set(taskId, data);
           return data;
         }
-      } catch {}
+      } catch (error) {
+        console.error('[taskService] Task-step retrieval failed:', error);
+        throw error;
+      }
     }
   }
   return memoryTaskSteps.get(taskId) || [];
@@ -335,9 +339,10 @@ export async function createTaskStep(
   if (isSupabaseConfigured()) {
     const supabase = createClient();
     if (supabase) {
-      try {
-        await supabase.from('task_steps').insert(newStep);
-      } catch {}
+      const { error } = await supabase.from('task_steps').insert(newStep);
+      if (error) {
+        throw new Error(`Failed to persist task step: ${error.message} (${error.code})`);
+      }
     }
   }
 
@@ -370,17 +375,16 @@ export async function updateTaskStep(
   if (isSupabaseConfigured()) {
     const supabase = createClient();
     if (supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('task_steps')
-          .update(patch)
-          .eq('id', stepId)
-          .select()
-          .single();
-        if (!error && data) {
-          foundStep = data;
-        }
-      } catch {}
+      const { data, error } = await supabase
+        .from('task_steps')
+        .update(patch)
+        .eq('id', stepId)
+        .select()
+        .single();
+      if (error) {
+        throw new Error(`Failed to update task step: ${error.message} (${error.code})`);
+      }
+      if (data) foundStep = data;
     }
   }
 
