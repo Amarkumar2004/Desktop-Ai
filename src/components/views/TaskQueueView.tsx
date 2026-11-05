@@ -289,9 +289,9 @@ export default function TaskQueueView({
             className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-stone-50 border border-stone-200/80 text-stone-700 focus:outline-none focus:border-amber-400"
           >
             <option value="All">All Agents</option>
-            <option value="LEX">LEX (Research)</option>
+            <option value="LEX">LEX (Implementation)</option>
             <option value="SUSI">SUSI (Orchestrator)</option>
-            <option value="SPY">SPY (Security)</option>
+            <option value="SPY">SPY (Research)</option>
             <option value="EURO">EURO (Analysis)</option>
           </select>
 
