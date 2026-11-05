@@ -114,6 +114,31 @@ function SwarmModalContent({
         if (data.messages && data.messages.length > 0) {
           setMessages(data.messages);
         }
+        if (Array.isArray(data.steps)) {
+          const stageByIndex: Record<number, SwarmStageInfo['stage']> = {
+            1: 'PLANNING',
+            2: 'RESEARCH',
+            3: 'ANALYSIS',
+            4: 'EXECUTION',
+            5: 'VERIFICATION',
+          };
+          const statusMap: Record<string, SwarmStageInfo['status']> = {
+            pending: 'pending',
+            running: 'running',
+            completed: 'completed',
+            failed: 'failed',
+            cancelled: 'cancelled',
+            blocked: 'failed',
+            requires_approval: 'pending',
+          };
+          setStages((previous) => previous.map((stage) => {
+            const persisted = (data.steps as Array<{ step_index: number; status: string; error?: string | null }>)
+              .find((step) => stageByIndex[step.step_index] === stage.stage);
+            return persisted
+              ? { ...stage, status: statusMap[persisted.status] || stage.status, summary: persisted.error || stage.summary }
+              : stage;
+          }));
+        }
       })
       .catch((err) => {
         console.warn('[MultiAgentSwarmModal] Past run fetch failed:', err);
