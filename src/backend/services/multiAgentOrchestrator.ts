@@ -548,22 +548,36 @@ Provide:
         throw new Error('LEX produced no parseable file artifacts; refusing to report implementation success.');
       }
       let staticAnalysis = analyzeGeneratedArtifacts(artifacts);
-      if (!staticAnalysis.passed && artifacts.length > 0) {
+      const maxLexCorrectionPasses = 2;
+      let lexCorrectionPass = 0;
+
+      while (!staticAnalysis.passed && lexCorrectionPass < maxLexCorrectionPasses) {
+        lexCorrectionPass += 1;
         await logAndEmit(
           'EURO',
           'LEX',
           'status',
-          `EURO found static-analysis errors. Sending one bounded correction pass to LEX: ${staticAnalysis.summary}`,
+          `EURO found static-analysis errors. Sending bounded correction pass ${lexCorrectionPass}/${maxLexCorrectionPasses} to LEX: ${staticAnalysis.summary}`,
           stage3Record,
-          { diagnostics: staticAnalysis.diagnostics as unknown as Json }
+          { correctionPass: lexCorrectionPass, diagnostics: staticAnalysis.diagnostics as unknown as Json }
         );
+
         const correction = await executeAiInference({
           systemPrompt: 'You are LEX. Correct the supplied artifacts exactly. Return complete corrected files in fenced code blocks with // File: paths. Do not claim tests or builds were run.',
-          prompt: `EURO static-analysis findings:\n${JSON.stringify(staticAnalysis.diagnostics, null, 2)}\n\nOriginal objective: ${title} — ${objective}\n\nPrevious deliverables:\n${lexResult.text}\n\nReturn corrected complete artifacts only.`,
+          prompt: `EURO static-analysis findings (pass ${lexCorrectionPass}):
+${JSON.stringify(staticAnalysis.diagnostics, null, 2)}
+
+Original objective: ${title} — ${objective}
+
+Previous deliverables:
+${lexResult.text}
+
+Return corrected complete artifacts only. Preserve every required file path and include the complete file contents.`,
           temperature: 0.1,
           signal: activeSignal,
         });
         if (activeSignal.aborted) throw new Error('Pipeline cancelled during LEX correction.');
+
         lexResult = correction;
         artifacts.length = 0;
         artifactIndex = 1;
@@ -571,15 +585,16 @@ Provide:
         while ((match = codeBlockRegex.exec(lexResult.text)) !== null) {
           const lang = match[1] || 'text';
           const code = match[2];
-          const fileMatch = code.match(/^\/\/\s*File:\s*([^\r\n]+)/m);
+          const fileMatch = code.match(/^\\/\\/\\s*File:\\s*([^\\r\\n]+)/m);
           const filename = fileMatch
             ? fileMatch[1].trim()
             : `deliverable_${artifactIndex}.${lang === 'typescript' || lang === 'tsx' ? 'tsx' : lang === 'json' ? 'json' : 'ts'}`;
           artifacts.push({ filename, content: code, language: lang });
           artifactIndex++;
         }
+
         if (artifacts.length === 0) {
-          throw new Error('LEX correction returned no parseable file artifacts.');
+          throw new Error(`LEX correction pass ${lexCorrectionPass} returned no parseable file artifacts.`);
         }
         staticAnalysis = analyzeGeneratedArtifacts(artifacts);
       }
