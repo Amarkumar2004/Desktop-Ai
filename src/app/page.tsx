@@ -631,7 +631,7 @@ function DashboardContent() {
         id: String(result.taskId),
         title,
         assignedAgent: 'SUSI',
-        progress: result.success ? 100 : 90,
+        progress: result.success ? 100 : 0,
         priority: newTaskPriority,
         category: 'Operations',
         completed: Boolean(result.success),
