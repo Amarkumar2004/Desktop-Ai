@@ -359,7 +359,11 @@ export async function getAgentRun(runId: string): Promise<AgentRun | null> {
       .eq('user_id', authCtx.userId)
       .single();
 
-    if (!error && data) {
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      throw new Error(`Failed to retrieve agent run from database: ${error.message} (${error.code})`);
+    }
+    if (data) {
       memoryAgentRuns.set(runId, data);
       return data;
     }
@@ -388,7 +392,10 @@ export async function getAgentRunsForTask(taskId: string): Promise<AgentRun[]> {
       .eq('user_id', authCtx.userId)
       .order('created_at', { ascending: false });
 
-    if (!error && data) {
+    if (error) {
+      throw new Error(`Failed to retrieve agent runs from database: ${error.message} (${error.code})`);
+    }
+    if (data) {
       data.forEach((r: AgentRun) => memoryAgentRuns.set(r.id, r));
       return data;
     }
@@ -414,7 +421,10 @@ export async function getAgentMessages(runId: string): Promise<AgentMessage[]> {
       .eq('user_id', authCtx.userId)
       .order('created_at', { ascending: true });
 
-    if (!error && data) {
+    if (error) {
+      throw new Error(`Failed to retrieve agent messages from database: ${error.message} (${error.code})`);
+    }
+    if (data) {
       memoryAgentMessages.set(runId, data);
       return data;
     }
@@ -489,8 +499,10 @@ export async function getAgentMemory(
       .eq('user_id', authCtx.userId);
     if (memoryKey) query = query.eq('memory_key', memoryKey);
     const { data, error } = await query.order('updated_at', { ascending: false });
-    if (!error && data) return data as AgentMemoryItem[];
-    return [];
+    if (error) {
+      throw new Error(`Failed to retrieve agent memory from database: ${error.message} (${error.code})`);
+    }
+    return (data ?? []) as AgentMemoryItem[];
   }
 
   const currentInstallation = getVerifiedInstallationId();
