@@ -244,6 +244,7 @@ Respond in structured format with clear directives for each agent.`;
         completed_at: new Date().toISOString(),
       });
       await updateTask(taskId, { progress: 20 });
+      await updateAgentRun(runId, { status: 'running' });
 
       await logAndEmit(
         'SUSI',
@@ -663,7 +664,7 @@ Return corrected complete artifacts only. Preserve every required file path and 
         },
         completed_at: new Date().toISOString(),
       });
-      await updateTask(taskId, { progress: 85 });
+      await updateTask(taskId, { progress: allRequestedFilesSucceeded ? 85 : 80 });
 
       await logAndEmit(
         'LEX',
@@ -898,7 +899,7 @@ You MUST end your output with a strict JSON evaluation block in exactly this for
 
       await updateAgentRun(runId, {
         status: finalStatus,
-        completed: false,
+        completed: true,
       }).catch(() => {});
 
       await updateTask(taskId, {
