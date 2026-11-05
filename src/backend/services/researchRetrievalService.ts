@@ -32,13 +32,17 @@ function decodeHtml(value: string): string {
     .trim();
 }
 
-async function fetchWithTimeout(url: string, signal?: AbortSignal): Promise<Response> {
+async function fetchWithTimeout<T>(
+  url: string,
+  signal: AbortSignal | undefined,
+  consume: (response: Response) => Promise<T>
+): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 9000);
-  const abort = () => controller.abort();
+  const timeout = setTimeout(() => controller.abort(new Error('Research request timed out.')), 9000);
+  const abort = () => controller.abort(signal?.reason);
   signal?.addEventListener('abort', abort, { once: true });
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       method: 'GET',
       redirect: 'error',
       signal: controller.signal,
@@ -48,6 +52,7 @@ async function fetchWithTimeout(url: string, signal?: AbortSignal): Promise<Resp
       },
       cache: 'no-store',
     });
+    return await consume(response);
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener('abort', abort);
@@ -70,9 +75,10 @@ export class ResearchRetrievalService {
     const providers: Array<() => Promise<SearchOutcome>> = [
       async () => {
         const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(trimmed)}&sort=stars&per_page=${maxResults}`;
-        const response = await fetchWithTimeout(url, options.signal);
-        if (!response.ok) throw new Error(`GitHub Search HTTP ${response.status}`);
-        const data = await response.json();
+        const data = await fetchWithTimeout(url, options.signal, async (response) => {
+          if (!response.ok) throw new Error(`GitHub Search HTTP ${response.status}`);
+          return response.json();
+        });
         const items = Array.isArray(data.items) ? data.items : [];
         return {
           provider: 'GitHub',
@@ -86,9 +92,10 @@ export class ResearchRetrievalService {
       },
       async () => {
         const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(trimmed)}&format=json&utf8=1&srlimit=${maxResults}`;
-        const response = await fetchWithTimeout(url, options.signal);
-        if (!response.ok) throw new Error(`Wikipedia Search HTTP ${response.status}`);
-        const data = await response.json();
+        const data = await fetchWithTimeout(url, options.signal, async (response) => {
+          if (!response.ok) throw new Error(`Wikipedia Search HTTP ${response.status}`);
+          return response.json();
+        });
         const items = Array.isArray(data?.query?.search) ? data.query.search : [];
         return {
           provider: 'Wikipedia',
@@ -105,9 +112,10 @@ export class ResearchRetrievalService {
       },
       async () => {
         const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(trimmed)}`;
-        const response = await fetchWithTimeout(url, options.signal);
-        if (!response.ok) throw new Error(`DuckDuckGo Search HTTP ${response.status}`);
-        const html = await response.text();
+        const html = await fetchWithTimeout(url, options.signal, async (response) => {
+          if (!response.ok) throw new Error(`DuckDuckGo Search HTTP ${response.status}`);
+          return response.text();
+        });
         const results: RetrievedSource[] = [];
         const pattern = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
         let match: RegExpExecArray | null;
