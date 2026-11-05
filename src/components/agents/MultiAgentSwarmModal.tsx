@@ -160,6 +160,77 @@ function SwarmModalContent({
     };
   }, [runId]);
 
+  // Poll persisted backend state while the server-side pipeline is running.
+  // Browser custom events cannot observe events emitted inside the Next.js server process.
+  useEffect(() => {
+    if (!isRunning) return;
+
+    let disposed = false;
+    const syncRuntimeState = async () => {
+      try {
+        const response = await fetchWithDesktopAuth(`/api/agents/orchestrate?taskId=${encodeURIComponent(task.id)}`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (disposed) return;
+
+        if (Array.isArray(data.runs) && data.runs.length > 0) {
+          const latestRun = data.runs[0] as AgentRun;
+          setRunId(latestRun.id);
+          if (latestRun.status === 'completed') setIsVerified(true);
+          if (latestRun.status === 'failed' || latestRun.status === 'cancelled') setIsVerified(false);
+        }
+
+        if (Array.isArray(data.messages)) {
+          setMessages((previous) => {
+            const byId = new Map(previous.map((message) => [message.id, message]));
+            for (const message of data.messages as AgentMessage[]) byId.set(message.id, message);
+            return Array.from(byId.values()).sort(
+              (left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
+            );
+          });
+        }
+
+        if (Array.isArray(data.steps)) {
+          const stageByIndex: Record<number, SwarmStageInfo['stage']> = {
+            1: 'PLANNING',
+            2: 'RESEARCH',
+            3: 'ANALYSIS',
+            4: 'EXECUTION',
+            5: 'VERIFICATION',
+          };
+          const statusMap: Record<string, SwarmStageInfo['status']> = {
+            pending: 'pending',
+            running: 'running',
+            completed: 'completed',
+            failed: 'failed',
+            cancelled: 'cancelled',
+            blocked: 'failed',
+            requires_approval: 'pending',
+          };
+          setStages((previous) => previous.map((stage) => {
+            const persisted = (data.steps as Array<{ step_index: number; status: string; title?: string | null; error?: string | null }>)
+              .find((step) => stageByIndex[step.step_index] === stage.stage);
+            if (!persisted) return stage;
+            return {
+              ...stage,
+              status: statusMap[persisted.status] || stage.status,
+              summary: persisted.error || stage.summary,
+            };
+          }));
+        }
+      } catch (pollError) {
+        console.warn('[MultiAgentSwarmModal] Runtime state sync failed:', pollError);
+      }
+    };
+
+    void syncRuntimeState();
+    const timer = window.setInterval(() => void syncRuntimeState(), 1200);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [isRunning, task.id]);
+
   // Auto-scroll messages
   useEffect(() => {
     if (activeTab === 'messages') {
