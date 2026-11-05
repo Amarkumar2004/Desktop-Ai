@@ -53,7 +53,7 @@ export function analyzeGeneratedArtifacts(
 
     const isTypeScript = ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs'].includes(extension)
       || ['typescript', 'tsx', 'javascript', 'jsx', 'js'].includes(language);
-    if (isTypeScript) {
+    if (!isTypeScript) {\n      diagnostics.push({ file: filename, severity: 'warning', code: 'UNSUPPORTED_ANALYSIS_LANGUAGE', message: 'This artifact language was not syntax-checked by the TypeScript parser.' });\n    }\n\n    if (isTypeScript) {
       const scriptKind = extension === 'tsx' || extension === 'jsx' || language === 'tsx' || language === 'jsx'
         ? ts.ScriptKind.TSX
         : extension === 'js' || extension === 'mjs' || extension === 'cjs' || language === 'javascript' || language === 'js'
