@@ -23,6 +23,7 @@ import { executeAiInference } from './aiProviderService';
 import { researchRetrievalService, ResearchRetrievalResult } from './researchRetrievalService';
 import { workspaceFileWriter, FileWriteResult, TrustedOverwriteApproval } from './workspaceFileWriter';
 import { scrubSensitiveString, scrubSensitiveData } from './credentialScrubber';
+import { analyzeGeneratedArtifacts } from './artifactStaticAnalysisService';
 import type { Json, AgentMessage } from '@/backend/types/database';
 
 export { scrubSensitiveString, scrubSensitiveData };
@@ -516,7 +517,7 @@ Provide:
 2. Complete Implementation Artifacts (Code / Config / Steps)
 3. Verification & Validation Steps`;
 
-      const lexResult = await executeAiInference({
+      let lexResult = await executeAiInference({
         systemPrompt:
           'You are LEX, a lead implementation engineer and execution AI agent. Produce clean, production-grade code and solutions.',
         prompt: lexExecutionPrompt,
@@ -541,6 +542,50 @@ Provide:
         artifacts.push({ filename, content: code, language: lang });
         artifactIndex++;
       }
+
+      // EURO's deterministic review gate: parse generated source before any disk write.
+      let staticAnalysis = analyzeGeneratedArtifacts(artifacts);
+      if (!staticAnalysis.passed && artifacts.length > 0) {
+        await logAndEmit(
+          'EURO',
+          'LEX',
+          'status',
+          `EURO found static-analysis errors. Sending one bounded correction pass to LEX: ${staticAnalysis.summary}`,
+          stage3Record,
+          { diagnostics: staticAnalysis.diagnostics as unknown as Json }
+        );
+        const correction = await executeAiInference({
+          systemPrompt: 'You are LEX. Correct the supplied artifacts exactly. Return complete corrected files in fenced code blocks with // File: paths. Do not claim tests or builds were run.',
+          prompt: `EURO static-analysis findings:\n${JSON.stringify(staticAnalysis.diagnostics, null, 2)}\n\nOriginal objective: ${title} — ${objective}\n\nPrevious deliverables:\n${lexResult.text}\n\nReturn corrected complete artifacts only.`,
+          temperature: 0.1,
+          signal: activeSignal,
+        });
+        if (activeSignal.aborted) throw new Error('Pipeline cancelled during LEX correction.');
+        lexResult = correction;
+        artifacts.length = 0;
+        artifactIndex = 1;
+        codeBlockRegex.lastIndex = 0;
+        while ((match = codeBlockRegex.exec(lexResult.text)) !== null) {
+          const lang = match[1] || 'text';
+          const code = match[2];
+          const fileMatch = code.match(/^\\/\\/\\s*File:\\s*([^\\r\\n]+)/m);
+          const filename = fileMatch
+            ? fileMatch[1].trim()
+            : `deliverable_${artifactIndex}.${lang === 'typescript' || lang === 'tsx' ? 'tsx' : lang === 'json' ? 'json' : 'ts'}`;
+          artifacts.push({ filename, content: code, language: lang });
+          artifactIndex++;
+        }
+        staticAnalysis = analyzeGeneratedArtifacts(artifacts);
+      }
+
+      await logAndEmit(
+        'EURO',
+        'LEX',
+        staticAnalysis.passed ? 'result' : 'error',
+        `EURO static analysis: ${staticAnalysis.summary}`,
+        stage3Record,
+        { checked: staticAnalysis.checked, passed: staticAnalysis.passed, diagnostics: staticAnalysis.diagnostics as unknown as Json }
+      );
 
       // Check whether actual workspace file writes were explicitly requested
       const shouldApplyFiles = Boolean(
@@ -570,7 +615,7 @@ Provide:
           : 'file_write_partial_or_rejected'
         : 'artifacts_generated';
 
-      const allRequestedFilesSucceeded = !shouldApplyFiles || (verifiedFilesCount === fileResults.length && fileResults.length > 0);
+      const allRequestedFilesSucceeded = staticAnalysis.passed && (!shouldApplyFiles || (verifiedFilesCount === fileResults.length && fileResults.length > 0));
 
       stage4Record.status = allRequestedFilesSucceeded ? 'completed' : 'failed';
       stage4Record.summary = shouldApplyFiles
