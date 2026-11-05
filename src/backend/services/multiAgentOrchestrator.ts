@@ -544,6 +544,9 @@ Provide:
       }
 
       // EURO's deterministic review gate: parse generated source before any disk write.
+      if (artifacts.length === 0) {
+        throw new Error('LEX produced no parseable file artifacts; refusing to report implementation success.');
+      }
       let staticAnalysis = analyzeGeneratedArtifacts(artifacts);
       if (!staticAnalysis.passed && artifacts.length > 0) {
         await logAndEmit(
@@ -568,12 +571,15 @@ Provide:
         while ((match = codeBlockRegex.exec(lexResult.text)) !== null) {
           const lang = match[1] || 'text';
           const code = match[2];
-          const fileMatch = code.match(/^\\/\\/\\s*File:\\s*([^\\r\\n]+)/m);
+          const fileMatch = code.match(/^\/\/\s*File:\s*([^\r\n]+)/m);
           const filename = fileMatch
             ? fileMatch[1].trim()
             : `deliverable_${artifactIndex}.${lang === 'typescript' || lang === 'tsx' ? 'tsx' : lang === 'json' ? 'json' : 'ts'}`;
           artifacts.push({ filename, content: code, language: lang });
           artifactIndex++;
+        }
+        if (artifacts.length === 0) {
+          throw new Error('LEX correction returned no parseable file artifacts.');
         }
         staticAnalysis = analyzeGeneratedArtifacts(artifacts);
       }
