@@ -679,7 +679,7 @@ export default function AccountSettingsPage() {
                           </Badge>
                         ) : (
                           <Badge variant="stone" size="sm">
-                            Not enabled
+                            Status unavailable
                           </Badge>
                         )}
                       </div>
@@ -916,18 +916,18 @@ export default function AccountSettingsPage() {
                         <h3 className="text-lg font-bold text-stone-900">
                           {billing.plan} Plan
                         </h3>
-                        <Badge variant="amber" size="sm">
-                          Free Forever
+                        <Badge variant="stone" size="sm">
+                          Billing unavailable
                         </Badge>
                       </div>
                       <p className="text-xs text-stone-600">
-                        Up to 5 autonomous agents, 5,000 monthly queue tasks, and 5 GB vector memory.
+                        Subscription limits are unavailable until a billing provider is connected.
                       </p>
                     </div>
 
                     <div className="text-left sm:text-right shrink-0">
-                      <div className="text-2xl font-black text-stone-900">$0</div>
-                      <span className="text-[11px] text-stone-500">per month</span>
+                      <div className="text-2xl font-black text-stone-900">—</div>
+                      <span className="text-[11px] text-stone-500">No billing data</span>
                     </div>
                   </div>
                 </Card>
@@ -945,19 +945,19 @@ export default function AccountSettingsPage() {
                           <Users className="w-4 h-4 text-amber-600" /> Active Agents
                         </span>
                         <span className="font-bold text-stone-900">
-                          {billing.activeAgentsUsed} / {billing.activeAgentsMax}
+                          Unavailable
                         </span>
                       </div>
                       <div className="w-full bg-stone-200 h-2 rounded-full overflow-hidden">
                         <div
                           className="bg-amber-500 h-full rounded-full transition-all"
                           style={{
-                            width: `${(billing.activeAgentsUsed / billing.activeAgentsMax) * 100}%`,
+                            width: '0%',
                           }}
                         />
                       </div>
                       <span className="text-[10.5px] text-stone-500 block">
-                        80% allocated (1 slot available)
+                        Usage data unavailable
                       </span>
                     </div>
 
@@ -968,20 +968,19 @@ export default function AccountSettingsPage() {
                           <Zap className="w-4 h-4 text-blue-600" /> Monthly Tasks
                         </span>
                         <span className="font-bold text-stone-900">
-                          {billing.monthlyTasksUsed.toLocaleString()} /{' '}
-                          {billing.monthlyTasksMax.toLocaleString()}
+                          Unavailable
                         </span>
                       </div>
                       <div className="w-full bg-stone-200 h-2 rounded-full overflow-hidden">
                         <div
                           className="bg-blue-500 h-full rounded-full transition-all"
                           style={{
-                            width: `${(billing.monthlyTasksUsed / billing.monthlyTasksMax) * 100}%`,
+                            width: '0%',
                           }}
                         />
                       </div>
                       <span className="text-[10.5px] text-stone-500 block">
-                        28% of monthly limit used
+                        Usage data unavailable
                       </span>
                     </div>
 
@@ -992,19 +991,19 @@ export default function AccountSettingsPage() {
                           <HardDrive className="w-4 h-4 text-emerald-600" /> Vector Storage
                         </span>
                         <span className="font-bold text-stone-900">
-                          {billing.storageUsedGB} GB / {billing.storageMaxGB} GB
+                          Unavailable
                         </span>
                       </div>
                       <div className="w-full bg-stone-200 h-2 rounded-full overflow-hidden">
                         <div
                           className="bg-emerald-500 h-full rounded-full transition-all"
                           style={{
-                            width: `${(billing.storageUsedGB / billing.storageMaxGB) * 100}%`,
+                            width: '0%',
                           }}
                         />
                       </div>
                       <span className="text-[10.5px] text-stone-500 block">
-                        3.58 GB available capacity
+                        Usage data unavailable
                       </span>
                     </div>
                   </div>
