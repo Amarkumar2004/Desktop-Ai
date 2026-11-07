@@ -105,7 +105,8 @@ let providerDiscoveryCache: { expiresAt: number; providers: Array<ProviderConfig
 
 /** Discover real models from configured cloud providers and the local Ollama daemon. */
 export async function discoverAvailableProviders(signal?: AbortSignal): Promise<Array<ProviderConfig & { models: string[]; available: boolean; diagnostic?: string }>> {
-  if (!signal && providerDiscoveryCache && providerDiscoveryCache.expiresAt > Date.now()) return providerDiscoveryCache.providers;
+  if (signal?.aborted) throw new Error('Provider discovery cancelled.');
+  if (providerDiscoveryCache && providerDiscoveryCache.expiresAt > Date.now()) return providerDiscoveryCache.providers;
   const discovered: Array<ProviderConfig & { models: string[]; available: boolean; diagnostic?: string }> = [];
   const configured = getAvailableProviders();
 
@@ -167,7 +168,7 @@ export async function discoverAvailableProviders(signal?: AbortSignal): Promise<
   } finally {
     clearTimeout(ollamaTimer);
   }
-  if (!signal) providerDiscoveryCache = { expiresAt: Date.now() + 30_000, providers: discovered };
+  providerDiscoveryCache = { expiresAt: Date.now() + 30_000, providers: discovered };
   return discovered;
 }
 
