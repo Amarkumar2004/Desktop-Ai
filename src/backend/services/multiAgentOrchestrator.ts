@@ -650,7 +650,7 @@ Return corrected complete artifacts only. Preserve every required file path and 
         }
       }
 
-      const executionMode = shouldApplyFiles
+      let executionMode = shouldApplyFiles
         ? verifiedFilesCount === fileResults.length && fileResults.length > 0
           ? 'file_write_applied'
           : 'file_write_partial_or_rejected'
@@ -894,6 +894,26 @@ Return the corrected complete files with their original paths.`,
         }
         allRequestedFilesSucceeded = staticAnalysis.passed &&
           (!shouldApplyFiles || (verifiedFilesCount === fileResults.length && fileResults.length > 0));
+        executionMode = shouldApplyFiles
+          ? allRequestedFilesSucceeded ? 'file_write_applied' : 'file_write_partial_or_rejected'
+          : 'artifacts_generated';
+        stage4Record.status = allRequestedFilesSucceeded ? 'completed' : 'failed';
+        stage4Record.summary = shouldApplyFiles
+          ? `Workspace files applied after correction: ${verifiedFilesCount}/${fileResults.length} read-back verified.`
+          : `Corrected ${artifacts.length} code artifacts in-memory; no disk write was requested.`;
+        stage4Record.details = {
+          executionOutput: lexResult.text,
+          artifactCount: artifacts.length,
+          executionMode,
+          fileOperations: fileResults as unknown as Json,
+          verifiedFilesCount,
+          provider: lexResult.provider,
+        };
+        await updateTaskStep(dbStep4.id, {
+          status: allRequestedFilesSucceeded ? 'completed' : 'failed',
+          result: { execution: lexResult.text, artifacts, executionMode, fileOperations: fileResults as unknown as Json, verifiedFilesCount },
+          completed_at: new Date().toISOString(),
+        });
         if (!allRequestedFilesSucceeded) {
           parsedVerdict = { verdict: 'VERIFIED_FAIL', acceptanceCriteriaMet: false, evidenceCredible: false, auditNotes: 'Corrected files were not all written and read-back verified.' };
           hasPassVerdict = false;
