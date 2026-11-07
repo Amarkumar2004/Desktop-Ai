@@ -7,6 +7,7 @@ import { useStudio } from "@/lib/store";
 import { isVisibleChatMessage } from "@/lib/constants";
 import { MAIN_SESSION_KEY } from "@/lib/reducer";
 import { useBgm } from "@/lib/useBgm";
+import { gameEvents } from "@/lib/events";
 import { loadOnboardingDone, loadGatewayConfig, saveOnboardingDone } from "@/lib/persistence";
 import type { HudDockItem, HudPanelId } from "./HudDock";
 import TopBar from "./TopBar";
@@ -22,6 +23,42 @@ import OnboardingOverlay from "./OnboardingOverlay";
 export default function GameHud() {
   const { state } = useStudio();
   const bgm = useBgm();
+
+  // Poll persisted SUSI runs so Agent Town reflects real multi-agent activity,
+  // rather than inventing idle/working states locally.
+  useEffect(() => {
+    let disposed = false;
+    let controller: AbortController | null = null;
+
+    const refreshRuntime = async () => {
+      controller?.abort();
+      controller = new AbortController();
+      try {
+        const response = await fetch("/api/agents/runtime", {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (!disposed && payload?.success === true && Array.isArray(payload.agents)) {
+          gameEvents.emit("susi-runtime-updated", payload.agents);
+        }
+      } catch (error) {
+        if (!(error instanceof Error && error.name === "AbortError")) {
+          // Runtime visibility is optional when signed out or Supabase is unavailable.
+        }
+      }
+    };
+
+    void refreshRuntime();
+    const interval = window.setInterval(() => void refreshRuntime(), 4000);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+      controller?.abort();
+    };
+  }, []);
   const [openPanel, setOpenPanel] = useState<HudPanelId | null>(null);
   const [seatManagerOpen, setSeatManagerOpen] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(
