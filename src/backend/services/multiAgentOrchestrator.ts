@@ -643,7 +643,7 @@ Return corrected complete artifacts only. Preserve every required file path and 
           : 'file_write_partial_or_rejected'
         : 'artifacts_generated';
 
-      const allRequestedFilesSucceeded = staticAnalysis.passed && (!shouldApplyFiles || (verifiedFilesCount === fileResults.length && fileResults.length > 0));
+      let allRequestedFilesSucceeded = staticAnalysis.passed && (!shouldApplyFiles || (verifiedFilesCount === fileResults.length && fileResults.length > 0));
 
       stage4Record.status = allRequestedFilesSucceeded ? 'completed' : 'failed';
       stage4Record.summary = shouldApplyFiles
@@ -751,7 +751,7 @@ You MUST end your output with a strict JSON evaluation block in exactly this for
 }
 \`\`\``;
 
-      const susiVerifyResult = await executeAiInference({
+      let susiVerifyResult = await executeAiInference({
         systemPrompt:
           'You are SUSI, an executive validation AI. Zero tolerance for fake success or hallucination. Require explicit structured evaluation.',
         prompt: susiVerifyPrompt,
@@ -787,14 +787,14 @@ You MUST end your output with a strict JSON evaluation block in exactly this for
       }
 
       // Explicit validation check: missing, incomplete, or ambiguous verdicts MUST FAIL
-      const hasPassVerdict = parsedVerdict?.verdict === 'VERIFIED_PASS';
-      const criteriaMet = parsedVerdict?.acceptanceCriteriaMet === true;
-      const fileCheckPassed = shouldApplyFiles
+      let hasPassVerdict = parsedVerdict?.verdict === 'VERIFIED_PASS';
+      let criteriaMet = parsedVerdict?.acceptanceCriteriaMet === true;
+      let fileCheckPassed = shouldApplyFiles
         ? parsedVerdict?.fileOperationsVerified === true && verifiedFilesCount === fileResults.length && fileResults.length > 0
         : true;
 
-      const evidenceCheckPassed = parsedVerdict?.evidenceCredible === true;
-      const isVerified = Boolean(
+      let evidenceCheckPassed = parsedVerdict?.evidenceCredible === true;
+      let isVerified = Boolean(
         parsedVerdict &&
           hasPassVerdict &&
           criteriaMet &&
@@ -802,6 +802,146 @@ You MUST end your output with a strict JSON evaluation block in exactly this for
           fileCheckPassed &&
           allRequestedFilesSucceeded
       );
+
+      // Bounded SUSI -> LEX correction -> EURO re-review -> SUSI re-verification loop.
+      // Never runs more than two correction passes and never bypasses deterministic static analysis.
+      const maxSusiCorrectionPasses = 2;
+      let susiCorrectionPass = 0;
+      while (!isVerified && susiCorrectionPass < maxSusiCorrectionPasses && !activeSignal.aborted) {
+        susiCorrectionPass += 1;
+        const feedback = parsedVerdict?.auditNotes || 'SUSI returned an incomplete or failed verification verdict.';
+        await logAndEmit(
+          'SUSI',
+          'LEX',
+          'handoff',
+          `SUSI rejected the current deliverables. Sending bounded correction pass ${susiCorrectionPass}/${maxSusiCorrectionPasses}: ${feedback}`,
+          stage5Record,
+          { correctionPass: susiCorrectionPass, feedback }
+        );
+
+        const correction = await executeAiInference({
+          systemPrompt: 'You are LEX. Apply SUSI audit feedback to the complete files. Return complete corrected files only, each in a fenced code block with // File: relative/path. Do not claim tests or builds were run.',
+          prompt: `Original task: ${title} — ${objective}
+SUSI audit feedback: ${feedback}
+Previous artifacts:
+${artifacts.map((item) => `FILE: ${item.filename}\\n${item.content}`).join('\\n\\n')}
+Return the corrected complete files with their original paths.`,
+          temperature: 0.1,
+          signal: activeSignal,
+        });
+        if (activeSignal.aborted) throw new Error('Pipeline cancelled during SUSI-directed LEX correction.');
+
+        lexResult = correction;
+        artifacts.length = 0;
+        artifactIndex = 1;
+        codeBlockRegex.lastIndex = 0;
+        while ((match = codeBlockRegex.exec(lexResult.text)) !== null) {
+          const lang = match[1] || 'text';
+          const code = match[2];
+          const fileMatch = code.match(/^\\/\\/\\s*File:\\s*([^\\r\\n]+)/m);
+          const filename = fileMatch ? fileMatch[1].trim() : `deliverable_${artifactIndex}.${lang === 'typescript' || lang === 'tsx' ? 'tsx' : lang === 'json' ? 'json' : 'ts'}`;
+          artifacts.push({ filename, content: code, language: lang });
+          artifactIndex += 1;
+        }
+        if (!artifacts.length) {
+          throw new Error(`LEX SUSI correction pass ${susiCorrectionPass} returned no complete file artifacts.`);
+        }
+
+        staticAnalysis = analyzeGeneratedArtifacts(artifacts);
+        await logAndEmit(
+          'EURO',
+          'LEX',
+          staticAnalysis.passed ? 'result' : 'error',
+          `EURO re-review pass ${susiCorrectionPass}: ${staticAnalysis.summary}`,
+          stage3Record,
+          { correctionPass: susiCorrectionPass, passed: staticAnalysis.passed, diagnostics: staticAnalysis.diagnostics as unknown as Json }
+        );
+        if (!staticAnalysis.passed) {
+          parsedVerdict = { verdict: 'VERIFIED_FAIL', acceptanceCriteriaMet: false, evidenceCredible: false, auditNotes: `EURO static analysis rejected corrected artifacts: ${staticAnalysis.summary}` };
+          hasPassVerdict = false;
+          criteriaMet = false;
+          evidenceCheckPassed = false;
+          isVerified = false;
+          continue;
+        }
+
+        if (shouldApplyFiles) {
+          fileResults.length = 0;
+          verifiedFilesCount = 0;
+          for (const art of artifacts) {
+            const writeRes = await workspaceFileWriter.writeFile(art.filename, art.content, {
+              taskId,
+              userId: userId || undefined,
+              trustedApproval: context.trustedApproval as TrustedOverwriteApproval | undefined,
+            });
+            fileResults.push(writeRes);
+            if (writeRes.verified) verifiedFilesCount += 1;
+          }
+        }
+        allRequestedFilesSucceeded = staticAnalysis.passed &&
+          (!shouldApplyFiles || (verifiedFilesCount === fileResults.length && fileResults.length > 0));
+        if (!allRequestedFilesSucceeded) {
+          parsedVerdict = { verdict: 'VERIFIED_FAIL', acceptanceCriteriaMet: false, evidenceCredible: false, auditNotes: 'Corrected files were not all written and read-back verified.' };
+          hasPassVerdict = false;
+          criteriaMet = false;
+          fileCheckPassed = false;
+          evidenceCheckPassed = false;
+          isVerified = false;
+          continue;
+        }
+
+        const euroReview = await executeAiInference({
+          systemPrompt: 'You are EURO, an independent implementation reviewer. Review the revised artifacts against the original objective and SUSI feedback. Identify remaining gaps. End with JSON {"review":"PASS"|"FAIL","findings":"..."}; PASS only when the files address the feedback and no critical gap remains.',
+          prompt: `Task: ${title} — ${objective}
+SUSI feedback: ${feedback}
+Static analysis: ${staticAnalysis.summary}
+Revised files:
+${artifacts.map((item) => `FILE: ${item.filename}\\n${item.content}`).join('\\n\\n')}`,
+          temperature: 0.1,
+          signal: activeSignal,
+        });
+        const euroReviewMatch = euroReview.text.match(/\\{[\\s\\S]*"review"[\\s\\S]*\\}/);
+        let euroReviewPassed = false;
+        if (euroReviewMatch) {
+          try { euroReviewPassed = JSON.parse(euroReviewMatch[0]).review === 'PASS'; } catch { euroReviewPassed = false; }
+        }
+        if (!euroReviewPassed) {
+          parsedVerdict = { verdict: 'VERIFIED_FAIL', acceptanceCriteriaMet: false, evidenceCredible: false, auditNotes: `EURO re-review did not approve the correction: ${euroReview.text.slice(0, 500)}` };
+          hasPassVerdict = false;
+          criteriaMet = false;
+          fileCheckPassed = !shouldApplyFiles || (verifiedFilesCount === fileResults.length && fileResults.length > 0);
+          evidenceCheckPassed = false;
+          isVerified = false;
+          continue;
+        }
+
+        susiVerifyResult = await executeAiInference({
+          systemPrompt: 'You are SUSI, the final independent verification authority. Return a strict JSON verdict. Never pass without credible evidence and verified file operations.',
+          prompt: `Re-audit the corrected artifacts after EURO approved them.
+Original task: ${title} — ${objective}
+Previous audit feedback: ${feedback}
+EURO review: ${euroReview.text}
+Artifacts: ${artifacts.map((item) => `${item.filename}: ${item.content.slice(0, 5000)}`).join('\\n\\n')}
+File write requested: ${shouldApplyFiles}
+Read-back verified: ${verifiedFilesCount}/${fileResults.length}
+Return exactly one JSON object with verdict, acceptanceCriteriaMet, evidenceCredible, fileOperationsVerified, auditNotes, executiveSummary.`,
+          temperature: 0.1,
+          signal: activeSignal,
+        });
+        parsedVerdict = null;
+        try {
+          const fenced = susiVerifyResult.text.match(/```json\\s*([\\s\\S]*?)\\s*```/);
+          const raw = fenced?.[1] || susiVerifyResult.text.match(/\\{[\\s\\S]*"verdict"[\\s\\S]*\\}/)?.[0];
+          if (raw) parsedVerdict = JSON.parse(raw);
+        } catch { parsedVerdict = null; }
+        hasPassVerdict = parsedVerdict?.verdict === 'VERIFIED_PASS';
+        criteriaMet = parsedVerdict?.acceptanceCriteriaMet === true;
+        fileCheckPassed = shouldApplyFiles
+          ? parsedVerdict?.fileOperationsVerified === true && verifiedFilesCount === fileResults.length && fileResults.length > 0
+          : true;
+        evidenceCheckPassed = parsedVerdict?.evidenceCredible === true;
+        isVerified = Boolean(parsedVerdict && hasPassVerdict && criteriaMet && evidenceCheckPassed && fileCheckPassed && allRequestedFilesSucceeded);
+      }
 
       const finalVerdictString: 'VERIFIED_PASS' | 'VERIFIED_FAIL' = isVerified ? 'VERIFIED_PASS' : 'VERIFIED_FAIL';
       const auditNotes = parsedVerdict?.auditNotes || (isVerified ? 'All criteria satisfied.' : 'Verification failed: missing, unsupported, or rejected criteria/evidence.');
