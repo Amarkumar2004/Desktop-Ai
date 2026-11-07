@@ -124,6 +124,7 @@ export class MultiAgentOrchestrator {
     const { taskId, title, objective, userId = null, context = {}, signal, onProgress } = input;
     const steps: MultiAgentStepRecord[] = [];
     let currentStepId: string | null = null;
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
     // Create internal controller and register pipeline
     const internalController = new AbortController();
@@ -158,6 +159,14 @@ export class MultiAgentOrchestrator {
       this.activePipelines.delete(taskId);
       throw initializationError;
     }
+
+    // Persist a heartbeat while the pipeline is active so a recovery worker can distinguish
+    // a live long-running task from a process that died between stages.
+    heartbeatTimer = setInterval(() => {
+      void updateAgentRun(runId, { status: 'running' }).catch((error) => {
+        console.error('[MultiAgentOrchestrator] Agent heartbeat persistence failed:', error);
+      });
+    }, 20_000);
 
     // Helper to log scrubbed message and trigger progress
     const logAndEmit = async (
@@ -993,6 +1002,7 @@ Return exactly one JSON object with verdict, acceptanceCriteriaMet, evidenceCred
         }
       );
 
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       this.activePipelines.delete(taskId);
 
       return {
@@ -1029,6 +1039,7 @@ Return exactly one JSON object with verdict, acceptanceCriteriaMet, evidenceCred
         finalOutput: executiveSummary,
       };
     } catch (err: unknown) {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       this.activePipelines.delete(taskId);
       const errorMsg = err instanceof Error ? err.message : String(err);
       const isCancelled = activeSignal.aborted || errorMsg.toLowerCase().includes('cancel');
