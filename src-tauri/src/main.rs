@@ -678,6 +678,121 @@ fn execute_pc_action(
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct WorkspaceCheckResult {
+    success: bool,
+    action: String,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    duration_ms: u128,
+    stdout: String,
+    stderr: String,
+}
+
+/// Runs only fixed project validation commands. No shell, arbitrary executable, or user-supplied arguments.
+#[tauri::command]
+fn run_workspace_check(workspace_root: String, action: String, user_confirmed: bool) -> Result<WorkspaceCheckResult, String> {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    if !user_confirmed {
+        return Err("Explicit user confirmation is required before running workspace checks.".to_string());
+    }
+    if workspace_root.trim().is_empty() {
+        return Err("Workspace root is required.".to_string());
+    }
+
+    let root = std::fs::canonicalize(&workspace_root)
+        .map_err(|e| format!("Workspace root cannot be resolved: {}", e))?;
+    if !root.is_dir() {
+        return Err("Workspace root must be an existing directory.".to_string());
+    }
+
+    let root_text = root.to_string_lossy().to_lowercase();
+    if root.parent().is_none()
+        || std::env::var("WINDIR").ok().map(|p| root_text.starts_with(&p.to_lowercase())).unwrap_or(false)
+        || std::env::var("ProgramFiles").ok().map(|p| root_text.starts_with(&p.to_lowercase())).unwrap_or(false)
+        || std::env::var("ProgramFiles(x86)").ok().map(|p| root_text.starts_with(&p.to_lowercase())).unwrap_or(false)
+    {
+        return Err("System and application installation directories are not valid workspaces.".to_string());
+    }
+
+    let normalized_action = action.trim().to_lowercase();
+    let mut command = match normalized_action.as_str() {
+        "build" => {
+            if !root.join("package.json").is_file() { return Err("package.json was not found in the workspace.".to_string()); }
+            let script = root.join("node_modules").join("next").join("dist").join("bin").join("next");
+            if !script.is_file() { return Err("Local Next.js CLI was not found; install project dependencies first.".to_string()); }
+            let mut cmd = Command::new("node");
+            cmd.arg(script).arg("build");
+            cmd
+        }
+        "test" => {
+            if !root.join("package.json").is_file() { return Err("package.json was not found in the workspace.".to_string()); }
+            let script = root.join("node_modules").join("vitest").join("vitest.mjs");
+            if !script.is_file() { return Err("Local Vitest runner was not found; install project dependencies first.".to_string()); }
+            let mut cmd = Command::new("node");
+            cmd.arg(script).arg("run");
+            cmd
+        }
+        "lint" => {
+            if !root.join("package.json").is_file() { return Err("package.json was not found in the workspace.".to_string()); }
+            let script = root.join("node_modules").join("eslint").join("bin").join("eslint.js");
+            if !script.is_file() { return Err("Local ESLint runner was not found; install project dependencies first.".to_string()); }
+            let mut cmd = Command::new("node");
+            cmd.arg(script);
+            cmd
+        }
+        "typecheck" => {
+            if !root.join("package.json").is_file() { return Err("package.json was not found in the workspace.".to_string()); }
+            let script = root.join("node_modules").join("typescript").join("bin").join("tsc");
+            if !script.is_file() { return Err("Local TypeScript compiler was not found; install project dependencies first.".to_string()); }
+            let mut cmd = Command::new("node");
+            cmd.arg(script).arg("--noEmit");
+            cmd
+        }
+        "cargo_check" => {
+            if !root.join("Cargo.toml").is_file() { return Err("Cargo.toml was not found in the workspace.".to_string()); }
+            let mut cmd = Command::new("cargo");
+            cmd.arg("check");
+            cmd
+        }
+        _ => return Err("Unsupported check. Allowed actions: build, test, lint, typecheck, cargo_check.".to_string()),
+    };
+
+    command.current_dir(&root).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+    let started = Instant::now();
+    let mut child = command.spawn().map_err(|e| format!("Could not start approved workspace check: {}", e))?;
+    let timeout = Duration::from_secs(600);
+    let mut timed_out = false;
+    loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(_) => break,
+            None if started.elapsed() >= timeout => {
+                timed_out = true;
+                let _ = child.kill();
+                break;
+            }
+            None => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+
+    let output = child.wait_with_output().map_err(|e| format!("Could not collect workspace check output: {}", e))?;
+    let success = !timed_out && output.status.success();
+    Ok(WorkspaceCheckResult {
+        success,
+        action: normalized_action,
+        exit_code: output.status.code(),
+        timed_out,
+        duration_ms: started.elapsed().as_millis(),
+        stdout: String::from_utf8_lossy(&output.stdout).chars().take(30000).collect(),
+        stderr: String::from_utf8_lossy(&output.stderr).chars().take(30000).collect(),
+    })
+}
+
 fn main() {
     let sys = System::new_with_specifics(
         RefreshKind::new()
@@ -696,7 +811,8 @@ fn main() {
             execute_pc_action,
             save_credential_secure,
             get_credential_secure,
-            delete_credential_secure
+            delete_credential_secure,
+            run_workspace_check
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
