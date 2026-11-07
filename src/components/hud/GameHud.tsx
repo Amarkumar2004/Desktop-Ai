@@ -51,7 +51,12 @@ export default function GameHud() {
       }
     };
 
-    void refreshRuntime();
+    // Recover only runs with an expired persisted heartbeat; the server claims each run atomically.
+    void fetch("/api/agents/recovery", { method: "POST", cache: "no-store" })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!disposed) void refreshRuntime();
+      });
     const interval = window.setInterval(() => void refreshRuntime(), 4000);
     return () => {
       disposed = true;
