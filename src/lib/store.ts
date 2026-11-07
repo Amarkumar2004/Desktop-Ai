@@ -181,6 +181,37 @@ export function StudioProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Bridge authenticated SUSI runtime records into Agent Town's real seat lifecycle ──
+  useEffect(() => {
+    const unsubscribe = gameEvents.on("susi-runtime-updated", (agents) => {
+      const currentSeats = seatsRef.current;
+      for (const agent of agents) {
+        const normalized = agent.id.toLowerCase();
+        const seat = currentSeats.find((candidate) =>
+          candidate.seatType === "agent" &&
+          [candidate.label, candidate.roleTitle, candidate.agentConfig?.identity?.name, candidate.agentConfig?.agentId]
+            .some((value) => typeof value === "string" && value.toLowerCase().includes(normalized)),
+        );
+        if (!seat) continue;
+        const status = agent.status === "working" ? "running"
+          : agent.status === "ready" ? "done"
+          : agent.status === "error" ? "failed"
+          : "empty";
+        dispatchRef.current({
+          type: "PATCH_SEAT_RUNTIME",
+          seatId: seat.seatId,
+          patch: {
+            status,
+            runId: agent.runId || undefined,
+            taskSnippet: agent.taskSnippet || undefined,
+            startedAt: agent.updatedAt || undefined,
+          },
+        });
+      }
+    });
+    return unsubscribe;
+  }, []);
+
   // ── Seat sync: merge discovered seats with persisted configs ──
   useEffect(() => {
     const unsub = gameEvents.on("seats-discovered", (discovered) => {
