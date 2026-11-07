@@ -70,6 +70,8 @@ export async function POST(_request: NextRequest) {
       objective: String(task.description || task.title || 'Resume the interrupted task from its original objective.'),
       userId: auth.user.id,
       context: { recoveredFromRunId: run.id, recovery: true },
+    }).catch((error) => {
+      console.error('[AgentRecovery] Failed to restart stale task:', error);
     });
   }
 
