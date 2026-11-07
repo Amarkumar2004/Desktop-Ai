@@ -6,6 +6,7 @@ const log = createLogger("GameEventBus");
 
 export interface GameEventMap {
   "seats-discovered": [seats: SeatDef[]];
+  "susi-runtime-updated": [agents: Array<{ id: "SUSI" | "SPY" | "EURO" | "LEX"; status: "idle" | "working" | "ready" | "error"; taskSnippet: string; runId?: string | null; updatedAt?: string | null } >];
   "seat-configs-updated": [seats: SeatState[]];
   "task-assigned": [taskId: string, message: string, seatId?: string, sessionKey?: string];
   "task-routed": [taskId: string, seatId: string, actorName: string];
