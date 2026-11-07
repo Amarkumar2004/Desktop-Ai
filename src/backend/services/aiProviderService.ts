@@ -126,11 +126,11 @@ export async function discoverAvailableProviders(signal?: AbortSignal): Promise<
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
       const models = provider.id === 'google_gemini'
-        ? (Array.isArray(payload?.models) ? payload.models.map((item: { name?: unknown }) => typeof item.name === 'string' ? item.name.replace(/^models\\//, '') : '').filter(Boolean) : [])
+        ? (Array.isArray(payload?.models) ? payload.models.map((item: { name?: unknown }) => typeof item.name === 'string' ? item.name.replace(/^models\//, '') : '').filter(Boolean) : [])
         : (Array.isArray(payload?.data)
           ? payload.data.map((item: { id?: unknown }) => item.id).filter((id: unknown): id is string => typeof id === 'string' && id.length > 0)
           : []);
-      discovered.push({ ...provider, models, available: models.length > 0, diagnostic: models.length ? undefined : 'Provider returned no models.' });
+      discovered.push({ ...provider, defaultModel: models.includes(provider.defaultModel) ? provider.defaultModel : (models[0] || provider.defaultModel), models, available: models.length > 0, diagnostic: models.length ? undefined : 'Provider returned no models.' });
     } catch (error) {
       discovered.push({ ...provider, models: [], available: false, diagnostic: error instanceof Error ? error.message : String(error) });
     } finally {
