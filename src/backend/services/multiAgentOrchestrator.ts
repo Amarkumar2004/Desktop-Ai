@@ -633,8 +633,12 @@ Return corrected complete artifacts only. Preserve every required file path and 
       let verifiedFilesCount = 0;
 
       if (shouldApplyFiles) {
+        if (typeof context.workspaceRoot !== 'string' || !context.workspaceRoot.trim()) {
+          throw new Error('Workspace file application requires an explicitly selected workspaceRoot; refusing to write into the server working directory.');
+        }
         for (const art of artifacts) {
           const writeRes = await workspaceFileWriter.writeFile(art.filename, art.content, {
+            workspaceRoot: context.workspaceRoot,
             taskId,
             userId: userId || undefined,
             trustedApproval: context.trustedApproval as TrustedOverwriteApproval | undefined,
@@ -879,6 +883,7 @@ Return the corrected complete files with their original paths.`,
           verifiedFilesCount = 0;
           for (const art of artifacts) {
             const writeRes = await workspaceFileWriter.writeFile(art.filename, art.content, {
+              workspaceRoot: context.workspaceRoot as string,
               taskId,
               userId: userId || undefined,
               trustedApproval: context.trustedApproval as TrustedOverwriteApproval | undefined,
