@@ -838,7 +838,7 @@ Return the corrected complete files with their original paths.`,
         while ((match = codeBlockRegex.exec(lexResult.text)) !== null) {
           const lang = match[1] || 'text';
           const code = match[2];
-          const fileMatch = code.match(/^\\/\\/\\s*File:\\s*([^\\r\\n]+)/m);
+          const fileMatch = code.match(/^\/\/\s*File:\s*([^\r\n]+)/m);
           const filename = fileMatch ? fileMatch[1].trim() : `deliverable_${artifactIndex}.${lang === 'typescript' || lang === 'tsx' ? 'tsx' : lang === 'json' ? 'json' : 'ts'}`;
           artifacts.push({ filename, content: code, language: lang });
           artifactIndex += 1;
@@ -900,7 +900,7 @@ ${artifacts.map((item) => `FILE: ${item.filename}\\n${item.content}`).join('\\n\
           temperature: 0.1,
           signal: activeSignal,
         });
-        const euroReviewMatch = euroReview.text.match(/\\{[\\s\\S]*"review"[\\s\\S]*\\}/);
+        const euroReviewMatch = euroReview.text.match(/\{[\s\S]*"review"[\s\S]*\}/);
         let euroReviewPassed = false;
         if (euroReviewMatch) {
           try { euroReviewPassed = JSON.parse(euroReviewMatch[0]).review === 'PASS'; } catch { euroReviewPassed = false; }
@@ -930,8 +930,8 @@ Return exactly one JSON object with verdict, acceptanceCriteriaMet, evidenceCred
         });
         parsedVerdict = null;
         try {
-          const fenced = susiVerifyResult.text.match(/```json\\s*([\\s\\S]*?)\\s*```/);
-          const raw = fenced?.[1] || susiVerifyResult.text.match(/\\{[\\s\\S]*"verdict"[\\s\\S]*\\}/)?.[0];
+          const fenced = susiVerifyResult.text.match(/```json\s*([\s\S]*?)\s*```/);
+          const raw = fenced?.[1] || susiVerifyResult.text.match(/\{[\s\S]*"verdict"[\s\S]*\}/)?.[0];
           if (raw) parsedVerdict = JSON.parse(raw);
         } catch { parsedVerdict = null; }
         hasPassVerdict = parsedVerdict?.verdict === 'VERIFIED_PASS';
