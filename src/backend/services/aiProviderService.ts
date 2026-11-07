@@ -101,8 +101,11 @@ export function getAvailableProviders(): ProviderConfig[] {
   return providers;
 }
 
+let providerDiscoveryCache: { expiresAt: number; providers: Array<ProviderConfig & { models: string[]; available: boolean; diagnostic?: string }> } | null = null;
+
 /** Discover real models from configured cloud providers and the local Ollama daemon. */
 export async function discoverAvailableProviders(signal?: AbortSignal): Promise<Array<ProviderConfig & { models: string[]; available: boolean; diagnostic?: string }>> {
+  if (!signal && providerDiscoveryCache && providerDiscoveryCache.expiresAt > Date.now()) return providerDiscoveryCache.providers;
   const discovered: Array<ProviderConfig & { models: string[]; available: boolean; diagnostic?: string }> = [];
   const configured = getAvailableProviders();
 
@@ -112,7 +115,9 @@ export async function discoverAvailableProviders(signal?: AbortSignal): Promise<
     const combined = signal ? anySignal([signal, timeout.signal]) : timeout.signal;
     try {
       const response = await fetch(`${provider.baseUrl}/models`, {
-        headers: provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
+        headers: provider.id === 'anthropic'
+          ? { 'x-api-key': provider.apiKey || '', 'anthropic-version': '2023-06-01' }
+          : provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
         signal: combined,
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -156,6 +161,7 @@ export async function discoverAvailableProviders(signal?: AbortSignal): Promise<
   } finally {
     clearTimeout(ollamaTimer);
   }
+  if (!signal) providerDiscoveryCache = { expiresAt: Date.now() + 30_000, providers: discovered };
   return discovered;
 }
 
