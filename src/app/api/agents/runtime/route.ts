@@ -30,7 +30,8 @@ export async function GET() {
     if (runError) throw runError;
 
     const activeRun = (runs || []).find((run) => ['queued', 'planning', 'running'].includes(run.status)) || null;
-    const runIds = (runs || []).map((run) => run.id);
+    const displayRun = activeRun || (runs || [])[0] || null;
+    const runIds = displayRun ? [displayRun.id] : [];
     const { data: messages, error: messageError } = runIds.length
       ? await supabase.from('agent_messages')
           .select('run_id, from_agent, message_type, content, created_at')
@@ -42,7 +43,7 @@ export async function GET() {
     if (messageError) throw messageError;
 
     const latestByAgent = new Map<AgentId, { status: 'idle' | 'working' | 'ready' | 'error'; taskSnippet: string; updatedAt: string }>();
-    const latestMessages = (messages || []).filter((message) => !activeRun || message.run_id === activeRun.id);
+    const latestMessages = messages || [];
     for (const message of latestMessages) {
       const agent = message.from_agent as AgentId;
       if (!['SUSI', 'SPY', 'EURO', 'LEX'].includes(agent)) continue;
@@ -65,7 +66,7 @@ export async function GET() {
       status: latestByAgent.get(id)?.status || (activeRun ? 'idle' : 'idle'),
       taskSnippet: latestByAgent.get(id)?.taskSnippet || '',
       updatedAt: latestByAgent.get(id)?.updatedAt || null,
-      runId: activeRun?.id || null,
+      runId: displayRun?.id || null,
     }));
     return NextResponse.json({
       success: true,
