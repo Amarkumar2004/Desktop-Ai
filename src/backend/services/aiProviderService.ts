@@ -97,16 +97,66 @@ export function getAvailableProviders(): ProviderConfig[] {
     });
   }
 
-  // 6. Local Ollama (Always check if available locally)
-  const ollamaBase = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '');
-  providers.push({
-    id: 'ollama',
-    name: 'Local Ollama',
-    baseUrl: `${ollamaBase}/v1`,
-    defaultModel: process.env.OLLAMA_MODEL || 'llama3:latest',
-  });
-
+  // Ollama is added only after a live /api/tags health/model discovery succeeds.
   return providers;
+}
+
+/** Discover real models from configured cloud providers and the local Ollama daemon. */
+export async function discoverAvailableProviders(signal?: AbortSignal): Promise<Array<ProviderConfig & { models: string[]; available: boolean; diagnostic?: string }>> {
+  const discovered: Array<ProviderConfig & { models: string[]; available: boolean; diagnostic?: string }> = [];
+  const configured = getAvailableProviders();
+
+  for (const provider of configured) {
+    const timeout = new AbortController();
+    const timer = setTimeout(() => timeout.abort(), 3500);
+    const combined = signal ? anySignal([signal, timeout.signal]) : timeout.signal;
+    try {
+      const response = await fetch(`${provider.baseUrl}/models`, {
+        headers: provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
+        signal: combined,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      const models = Array.isArray(payload?.data)
+        ? payload.data.map((item: { id?: unknown }) => item.id).filter((id: unknown): id is string => typeof id === 'string' && id.length > 0)
+        : [];
+      discovered.push({ ...provider, models, available: models.length > 0, diagnostic: models.length ? undefined : 'Provider returned no models.' });
+    } catch (error) {
+      discovered.push({ ...provider, models: [], available: false, diagnostic: error instanceof Error ? error.message : String(error) });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  const ollamaBase = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '');
+  const ollamaTimeout = new AbortController();
+  const ollamaTimer = setTimeout(() => ollamaTimeout.abort(), 2500);
+  const ollamaSignal = signal ? anySignal([signal, ollamaTimeout.signal]) : ollamaTimeout.signal;
+  try {
+    const response = await fetch(`${ollamaBase}/api/tags`, { signal: ollamaSignal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const models = Array.isArray(payload?.models)
+      ? payload.models.map((item: { name?: unknown }) => item.name).filter((name: unknown): name is string => typeof name === 'string' && name.length > 0)
+      : [];
+    if (models.length) {
+      discovered.push({
+        id: 'ollama',
+        name: 'Local Ollama',
+        baseUrl: `${ollamaBase}/v1`,
+        defaultModel: models.includes(process.env.OLLAMA_MODEL || '') ? (process.env.OLLAMA_MODEL as string) : models[0],
+        models,
+        available: true,
+      });
+    } else {
+      discovered.push({ id: 'ollama', name: 'Local Ollama', baseUrl: `${ollamaBase}/v1`, defaultModel: '', models: [], available: false, diagnostic: 'Ollama is reachable but no models are installed.' });
+    }
+  } catch (error) {
+    discovered.push({ id: 'ollama', name: 'Local Ollama', baseUrl: `${ollamaBase}/v1`, defaultModel: '', models: [], available: false, diagnostic: error instanceof Error ? error.message : String(error) });
+  } finally {
+    clearTimeout(ollamaTimer);
+  }
+  return discovered;
 }
 
 /**
@@ -252,7 +302,7 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
  * Strictly avoids fake success. Throws explicit diagnostic error if all providers fail.
  */
 export async function executeAiInference(options: AiInferenceOptions): Promise<AiInferenceResult> {
-  const allProviders = getAvailableProviders();
+  const allProviders = (await discoverAvailableProviders(options.signal)).filter((provider) => provider.available);
   const errors: string[] = [];
 
   // Filter or prioritize providers based on preferredProvider option
@@ -314,6 +364,6 @@ export async function executeAiInference(options: AiInferenceOptions): Promise<A
 
   throw new Error(
     `All configured AI providers failed for multi-agent inference:\n${errors.join('\n')}\n` +
-    `Please configure an API key for Google Gemini, Groq, or OpenAI in Settings, or run local Ollama.`
+    `Configure a valid cloud API key in Settings or install at least one model in a running local Ollama instance.`
   );
 }
