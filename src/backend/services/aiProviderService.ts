@@ -109,9 +109,9 @@ export async function discoverAvailableProviders(signal?: AbortSignal): Promise<
   const discovered: Array<ProviderConfig & { models: string[]; available: boolean; diagnostic?: string }> = [];
   const configured = getAvailableProviders();
 
-  for (const provider of configured) {
+  const cloudResults = await Promise.all(configured.map(async (provider) => {
     const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(), 3500);
+    const timer = setTimeout(() => timeout.abort(), 2500);
     const combined = signal ? anySignal([signal, timeout.signal]) : timeout.signal;
     try {
       const modelUrl = provider.id === 'google_gemini'
@@ -130,13 +130,14 @@ export async function discoverAvailableProviders(signal?: AbortSignal): Promise<
         : (Array.isArray(payload?.data)
           ? payload.data.map((item: { id?: unknown }) => item.id).filter((id: unknown): id is string => typeof id === 'string' && id.length > 0)
           : []);
-      discovered.push({ ...provider, defaultModel: models.includes(provider.defaultModel) ? provider.defaultModel : (models[0] || provider.defaultModel), models, available: models.length > 0, diagnostic: models.length ? undefined : 'Provider returned no models.' });
+      return { ...provider, defaultModel: models.includes(provider.defaultModel) ? provider.defaultModel : (models[0] || provider.defaultModel), models, available: models.length > 0, diagnostic: models.length ? undefined : 'Provider returned no models.' };
     } catch (error) {
-      discovered.push({ ...provider, models: [], available: false, diagnostic: error instanceof Error ? error.message : String(error) });
+      return { ...provider, models: [], available: false, diagnostic: error instanceof Error ? error.message : String(error) };
     } finally {
       clearTimeout(timer);
     }
-  }
+  }));
+  discovered.push(...cloudResults);
 
   const ollamaBase = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/+$/, '');
   const ollamaTimeout = new AbortController();
