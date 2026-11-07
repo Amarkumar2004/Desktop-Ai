@@ -133,7 +133,7 @@ export async function discoverAvailableProviders(signal?: AbortSignal): Promise<
           : []);
       return { ...provider, defaultModel: models.includes(provider.defaultModel) ? provider.defaultModel : (models[0] || provider.defaultModel), models, available: models.length > 0, diagnostic: models.length ? undefined : 'Provider returned no models.' };
     } catch (error) {
-      return { ...provider, models: [], available: false, diagnostic: error instanceof Error ? error.message : String(error) };
+      return { ...provider, models: [], available: false, diagnostic: (error instanceof Error ? error.message : String(error)).replace(/(key=)[^&\\s]+/gi, '$1[REDACTED]').slice(0, 160) };
     } finally {
       clearTimeout(timer);
     }
