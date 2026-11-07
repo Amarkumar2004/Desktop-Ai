@@ -114,17 +114,22 @@ export async function discoverAvailableProviders(signal?: AbortSignal): Promise<
     const timer = setTimeout(() => timeout.abort(), 3500);
     const combined = signal ? anySignal([signal, timeout.signal]) : timeout.signal;
     try {
-      const response = await fetch(`${provider.baseUrl}/models`, {
+      const modelUrl = provider.id === 'google_gemini'
+        ? `${provider.baseUrl}/models?key=${encodeURIComponent(provider.apiKey || '')}`
+        : `${provider.baseUrl}/models`;
+      const response = await fetch(modelUrl, {
         headers: provider.id === 'anthropic'
           ? { 'x-api-key': provider.apiKey || '', 'anthropic-version': '2023-06-01' }
-          : provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
+          : provider.id === 'google_gemini' ? {} : provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
         signal: combined,
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
-      const models = Array.isArray(payload?.data)
-        ? payload.data.map((item: { id?: unknown }) => item.id).filter((id: unknown): id is string => typeof id === 'string' && id.length > 0)
-        : [];
+      const models = provider.id === 'google_gemini'
+        ? (Array.isArray(payload?.models) ? payload.models.map((item: { name?: unknown }) => typeof item.name === 'string' ? item.name.replace(/^models\\//, '') : '').filter(Boolean) : [])
+        : (Array.isArray(payload?.data)
+          ? payload.data.map((item: { id?: unknown }) => item.id).filter((id: unknown): id is string => typeof id === 'string' && id.length > 0)
+          : []);
       discovered.push({ ...provider, models, available: models.length > 0, diagnostic: models.length ? undefined : 'Provider returned no models.' });
     } catch (error) {
       discovered.push({ ...provider, models: [], available: false, diagnostic: error instanceof Error ? error.message : String(error) });
@@ -288,6 +293,50 @@ async function callGemini(
   }
 }
 
+/** Calls Anthropic's native Messages API (not the OpenAI-compatible chat route). */
+async function callAnthropic(
+  provider: ProviderConfig,
+  model: string,
+  systemPrompt: string | undefined,
+  userPrompt: string,
+  temperature: number,
+  signal?: AbortSignal
+): Promise<string> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
+  const combinedSignal = signal ? anySignal([signal, controller.signal]) : controller.signal;
+  try {
+    const response = await fetch(`${provider.baseUrl}/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': provider.apiKey || '',
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        temperature,
+        system: systemPrompt || undefined,
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+      signal: combinedSignal,
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => response.statusText);
+      throw new Error(`[Anthropic] HTTP ${response.status}: ${detail.slice(0, 300)}`);
+    }
+    const payload = await response.json();
+    const text = Array.isArray(payload?.content)
+      ? payload.content.filter((part: { type?: string; text?: string }) => part.type === 'text').map((part: { text?: string }) => part.text || '').join('')
+      : '';
+    if (!text.trim()) throw new Error('[Anthropic] Returned empty content.');
+    return text.trim();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /**
  * Combines multiple AbortSignals safely.
  */
@@ -337,23 +386,11 @@ export async function executeAiInference(options: AiInferenceOptions): Promise<A
     try {
       let resultText: string;
       if (provider.id === 'google_gemini') {
-        resultText = await callGemini(
-          provider,
-          model,
-          options.systemPrompt,
-          options.prompt,
-          temp,
-          options.signal
-        );
+        resultText = await callGemini(provider, model, options.systemPrompt, options.prompt, temp, options.signal);
+      } else if (provider.id === 'anthropic') {
+        resultText = await callAnthropic(provider, model, options.systemPrompt, options.prompt, temp, options.signal);
       } else {
-        resultText = await callOpenAiCompatible(
-          provider,
-          model,
-          options.systemPrompt,
-          options.prompt,
-          temp,
-          options.signal
-        );
+        resultText = await callOpenAiCompatible(provider, model, options.systemPrompt, options.prompt, temp, options.signal);
       }
 
       return {
